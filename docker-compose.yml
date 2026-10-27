@@ -1,0 +1,22 @@
+services:
+  js:
+    build:
+      context: .
+      dockerfile: js/Dockerfile
+    volumes:
+      - ./js:/work/js
+    working_dir: /work/js
+    command: ["node", "src/main.js"]
+
+  go:
+    build:
+      context: .
+      dockerfile: go/Dockerfile
+    volumes:
+      - ./go:/work/go
+      - gocache:/root/.cache/go-build
+    working_dir: /work/go
+    command: ["go", "run", "."]
+
+volumes:
+  gocache:

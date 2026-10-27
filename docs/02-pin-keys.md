@@ -1,0 +1,69 @@
+# 02. PIN 系: ZPK / TPK / IWK / AWK, PIN ブロック, PIN 変換, PVK / PVV
+
+## 登場する鍵
+
+| 鍵 | 役割 |
+|---|---|
+| TMK (Terminal Master Key) | ATM / POS 端末に設定するマスター鍵。TPK を運ぶための鍵(端末版の ZMK)。 |
+| TPK (Terminal PIN Key) | 端末が PIN ブロックを暗号化する作業鍵。 |
+| ZPK (Zone PIN Key) | 組織間(アクワイアラとスイッチ、スイッチとイシュア)で PIN ブロックを暗号化する作業鍵。 |
+| IWK (Issuer Working Key) / AWK (Acquirer Working Key) | VisaNet とイシュア / アクワイアラの間で使う PIN 暗号化鍵。実体は ZPK と同じ。 |
+| PVK (PIN Verification Key) | イシュアが PIN の正しさを検証するための鍵。 |
+
+## PIN ブロック(ISO 9564-1)
+
+PIN は単独で暗号化せず、PAN と組み合わせた 8 バイトの **PIN ブロック** にしてから暗号化する。同じ PIN でもカードが違えば暗号文が変わり、辞書攻撃や使い回しを防ぐ。
+
+### Format 0 (ISO-0)
+
+```
+PIN フィールド : 0 L P P P P F F F F F F F F F F   (L = PIN 長, P = PIN, F = 詰め物)
+PAN フィールド : 0 0 0 0 + PAN からチェックデジットを除いた右 12 桁
+平文 PIN ブロック = PIN フィールド XOR PAN フィールド
+```
+
+例: PIN 1234、PAN 4111111111111111
+
+```
+PIN フィールド : 041234FFFFFFFFFF
+PAN フィールド : 0000111111111111
+XOR            : 041225EEEEEEEEEE
+```
+
+他の形式として Format 1(PAN を使わず乱数を入れる)、Format 3(詰め物を乱数にした Format 0)、Format 4(AES、16 バイト)がある。レガシーの 3DES 環境では Format 0 が最も一般的。
+
+### 暗号化
+
+```
+暗号化 PIN ブロック = 3DES_ZPK( 平文 PIN ブロック )   (端末なら TPK)
+```
+
+## PIN 変換(PIN translation)
+
+PIN ブロックは端末からイシュアに届くまで複数の組織を経由するが、各区間で別の鍵を使う。中継点(アクワイアラ、スイッチ)では **HSM の中で** 前区間の鍵で復号し、次区間の鍵で暗号化し直す。平文の PIN が HSM の外に出ることはない。
+
+```
+端末 ──TPK──▶ アクワイアラ ──ZPK(AWK)──▶ ネットワーク ──ZPK(IWK)──▶ イシュア
+                 HSM で TPK→ZPK 変換          HSM で ZPK→ZPK 変換
+```
+
+変換時に PIN ブロック形式を変えること(Format 0 → Format 1 など)もできる。
+
+## PIN 検証: PVK と PVV(Visa 方式)
+
+イシュアは PIN そのものを保存せず、**PVV (PIN Verification Value)** という 4 桁の値を保存または磁気ストライプ / チップに書き込む。検証時は受け取った PIN から PVV を再計算して比較する。
+
+```
+TSP (Transformed Security Parameter)
+  = PAN からチェックデジットを除いた右 11 桁 + PVKI(1 桁) + PIN の先頭 4 桁   (16 桁)
+PVV = decimalize( 3DES_PVK( TSP ) ) の先頭 4 桁
+```
+
+- **PVKI (PVK Index)**: どの PVK で計算したかを示す 1 桁の番号。鍵の世代管理に使う。
+- **decimalize**: 16 進 16 文字を 10 進に変換する手順。まず 0-9 の文字を左から拾い、足りなければ A-F を 0-5 に読み替えて拾う。CVV と共通。
+
+もう一つの代表的な方式が **IBM 3624 Offset** で、PAN から「自然 PIN」を計算し、顧客 PIN との差分(オフセット)を保存する。本リポジトリでは PVV のみ実装。
+
+## 実装
+
+- `js/src/pin.js`、`go/pin.go`: Format 0 の組み立て・分解、ZPK による暗号化、PIN 変換、decimalize、PVV
