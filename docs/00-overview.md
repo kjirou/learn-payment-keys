@@ -32,16 +32,16 @@ Visa や HSM ベンダー固有に見える用語の多くは、公開標準の�
 
 | 概念 | 準拠規格 | 一般名 | Thales payShield | Visa |
 |---|---|---|---|---|
-| HSM 内マスター鍵 | - | - | LMK | - |
-| 鍵を運ぶための鍵 | ANSI X9.24, ISO 11568 | KEK (Key Encryption Key) | ZMK | ZCMK |
-| PIN 暗号化鍵(組織間) | ISO 9564, ANSI X9.8 | PEK (PIN Encryption Key) | ZPK | IWK(イシュア側)/ AWK(アクワイアラ側) |
-| PIN 暗号化鍵(端末) | 同上 | - | TPK | - |
-| 端末のマスター鍵 | 同上 | - | TMK | - |
-| PIN 検証鍵 | ベンダー方式(Visa PVV / IBM 3624) | - | PVK | PVK |
-| カード検証値の鍵 | - | - | CVK | CVK A / CVK B |
-| EMV イシュアマスター鍵 | EMV Book 2 | IMK | - | MDK (MDK_AC / MDK_SMI / MDK_SMC) |
-| EMV カード鍵 | EMV Book 2 | ICC Master Key | - | UDK |
-| EMV セッション鍵 | EMV Book 2 Annex A1.3 | Session Key | - | (CVN により有無・方式が異なる) |
+| HSM 内マスター鍵 | - | - | LMK (Local Master Key) | - |
+| 鍵を運ぶための鍵 | ANSI X9.24, ISO 11568 | KEK (Key Encryption Key) | ZMK (Zone Master Key) | ZCMK (Zone Control Master Key) |
+| PIN 暗号化鍵(組織間) | ISO 9564, ANSI X9.8 | PEK (PIN Encryption Key) | ZPK (Zone PIN Key) | IWK (Issuer Working Key、イシュア側) / AWK (Acquirer Working Key、アクワイアラ側) |
+| PIN 暗号化鍵(端末) | 同上 | - | TPK (Terminal PIN Key) | - |
+| 端末のマスター鍵 | 同上 | - | TMK (Terminal Master Key) | - |
+| PIN 検証鍵 | ベンダー方式(Visa PVV / IBM 3624) | - | PVK (PIN Verification Key) | PVK (PIN Verification Key) |
+| カード検証値の鍵 | - | - | CVK (Card Verification Key) | CVK A / CVK B (Card Verification Key) |
+| EMV イシュアマスター鍵 | EMV Book 2 | IMK (Issuer Master Key) | - | MDK (Master Derivation Key。MDK_AC / MDK_SMI / MDK_SMC) |
+| EMV カード鍵 | EMV Book 2 | ICC Master Key (ICC = Integrated Circuit Card) | - | UDK (Unique Derivation Key) |
+| EMV セッション鍵 | EMV Book 2 Annex A1.3 | Session Key | - | (CVN (Cryptogram Version Number) により有無・方式が異なる) |
 
 Mastercard では IMK をそのまま IMK と呼び、M/Chip の派生方式を用いる。概念は同じで、名前と細部のオプションが違う、と理解しておけばよい。
 
