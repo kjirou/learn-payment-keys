@@ -28,22 +28,22 @@ IMK / MDK  (イシュアマスター鍵。AC / SMI / SMC の 3 本)
 
 ## 一般名と各組織の呼び名
 
-Visa や HSM ベンダー固有に見える用語の多くは、公開標準の概念に対する呼び名である。
+Visa や HSM ベンダー固有に見える用語の多くは、公開標準の概念に対する呼び名である。概念は同じで、名前と細部のオプションが組織ごとに違う、と理解しておけばよい。
 
-| 概念 | 準拠規格 | 一般名 | Thales payShield | Visa |
-|---|---|---|---|---|
-| HSM 内マスター鍵 | - | - | LMK (Local Master Key) | - |
-| 鍵を運ぶための鍵 | ANSI X9.24, ISO 11568 | KEK (Key Encryption Key) | ZMK (Zone Master Key) | ZCMK (Zone Control Master Key) |
-| PIN 暗号化鍵(組織間) | ISO 9564, ANSI X9.8 | PEK (PIN Encryption Key) | ZPK (Zone PIN Key) | IWK (Issuer Working Key、イシュア側) / AWK (Acquirer Working Key、アクワイアラ側) |
-| PIN 暗号化鍵(端末) | 同上 | - | TPK (Terminal PIN Key) | - |
-| 端末のマスター鍵 | 同上 | - | TMK (Terminal Master Key) | - |
-| PIN 検証鍵 | ベンダー方式(Visa PVV / IBM 3624) | - | PVK (PIN Verification Key) | PVK (PIN Verification Key) |
-| カード検証値の鍵 | - | - | CVK (Card Verification Key) | CVK A / CVK B (Card Verification Key) |
-| EMV イシュアマスター鍵 | EMV Book 2 | IMK (Issuer Master Key) | - | MDK (Master Derivation Key。MDK_AC / MDK_SMI / MDK_SMC) |
-| EMV カード鍵 | EMV Book 2 | ICC Master Key (ICC = Integrated Circuit Card) | - | UDK (Unique Derivation Key) |
-| EMV セッション鍵 | EMV Book 2 Annex A1.3 | Session Key | - | (CVN (Cryptogram Version Number) により有無・方式が異なる) |
+「Thales payShield」は決済業界で最も広く使われている HSM (Hardware Security Module) 製品で、LMK / ZMK / ZPK などの呼び名は、この製品のコマンド仕様の用語が業界共通語になったもの。
 
-Mastercard では IMK をそのまま IMK と呼び、M/Chip の派生方式を用いる。概念は同じで、名前と細部のオプションが違う、と理解しておけばよい。
+| 概念 | 準拠規格 | 一般名 | Thales payShield での名称 | Visa での名称 | 他ベンダー・他ブランドでの名称 |
+|---|---|---|---|---|---|
+| HSM 内マスター鍵 | - | - | LMK (Local Master Key) | - | Utimaco Atalla: MFK (Master File Key) |
+| 鍵を運ぶための鍵 | ANSI X9.24, ISO 11568 | KEK (Key Encryption Key) | ZMK (Zone Master Key) | ZCMK (Zone Control Master Key) | Utimaco Atalla: KEK |
+| PIN 暗号化鍵(組織間) | ISO 9564, ANSI X9.8 | PEK (PIN Encryption Key) | ZPK (Zone PIN Key) | IWK (Issuer Working Key、イシュア側) / AWK (Acquirer Working Key、アクワイアラ側) | Utimaco Atalla: PEK |
+| PIN 暗号化鍵(端末) | 同上 | - | TPK (Terminal PIN Key) | - | - |
+| 端末のマスター鍵 | 同上 | - | TMK (Terminal Master Key) | - | - |
+| PIN 検証鍵 | ベンダー方式(Visa PVV / IBM 3624) | - | PVK (PIN Verification Key) | PVK (PIN Verification Key) | IBM 3624 方式: PVK(オフセット方式で使う) |
+| カード検証値の鍵 | - | - | CVK (Card Verification Key) | CVK A / CVK B (Card Verification Key) | Mastercard: CVC (Card Validation Code) 用の鍵。Thales では同じ CVK を使う |
+| EMV イシュアマスター鍵 | EMV Book 2 | IMK (Issuer Master Key) | - | MDK (Master Derivation Key。MDK_AC / MDK_SMI / MDK_SMC) | Mastercard M/Chip: IMK (EMV と同じ呼び名。IMK_AC / IMK_SMI / IMK_SMC) |
+| EMV カード鍵 | EMV Book 2 | ICC Master Key (ICC = Integrated Circuit Card) | - | UDK (Unique Derivation Key) | Mastercard M/Chip: ICC Master Key または MK |
+| EMV セッション鍵 | EMV Book 2 Annex A1.3 | Session Key | - | (CVN (Cryptogram Version Number) により有無・方式が異なる) | Mastercard M/Chip: Session Key(EMV CSK 方式のほか、M/Chip 独自の派生方式もある) |
 
 ## 本リポジトリで扱う範囲
 
