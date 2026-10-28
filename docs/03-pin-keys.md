@@ -1,4 +1,4 @@
-# 02. PIN 系: ZPK / TPK / IWK / AWK, PIN ブロック, PIN 変換, PVK / PVV
+# 03. PIN 系: ZPK / TPK / IWK / AWK, PIN ブロック, PIN 変換, PVK / PVV
 
 ## 登場する鍵
 

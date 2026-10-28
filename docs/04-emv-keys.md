@@ -1,4 +1,4 @@
-# 03. EMV 系: IMK(MDK), UDK, セッション鍵, ARQC / ARPC
+# 04. EMV 系: IMK(MDK), UDK, セッション鍵, ARQC / ARPC
 
 ## 登場する鍵
 

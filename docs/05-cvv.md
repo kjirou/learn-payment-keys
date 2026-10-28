@@ -1,4 +1,4 @@
-# 04. カード検証値: CVK と CVV / iCVV / CVV2
+# 05. カード検証値: CVK と CVV / iCVV / CVV2
 
 ## 登場する鍵
 

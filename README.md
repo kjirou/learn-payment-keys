@@ -29,10 +29,11 @@ make check   # 両方を実行して出力を diff(差分なしなら OK)
 | ファイル | 内容 |
 |---|---|
 | [docs/00-overview.md](docs/00-overview.md) | 全体像。鍵階層の 2 本の木と、一般名と Visa / HSM ベンダー名の対応表 |
-| [docs/01-key-exchange.md](docs/01-key-exchange.md) | 鍵交換: LMK, ZMK(ZCMK), 鍵コンポーネント, KCV, key-under-key, TR-31 |
-| [docs/02-pin-keys.md](docs/02-pin-keys.md) | PIN 系: ZPK/TPK/IWK/AWK, ISO 9564 PIN ブロック, PIN 変換, PVK/PVV |
-| [docs/03-emv-keys.md](docs/03-emv-keys.md) | EMV 系: IMK(MDK), UDK 派生, セッション鍵, ARQC/ARPC |
-| [docs/04-cvv.md](docs/04-cvv.md) | カード検証値: CVK と CVV/iCVV/CVV2 |
+| [docs/01-crypto-basics.md](docs/01-crypto-basics.md) | 前提知識: DES / 3DES, ECB, 単一 DES との関係, `3DES_key( data )` 記法の読み方 |
+| [docs/02-key-exchange.md](docs/02-key-exchange.md) | 鍵交換: LMK, ZMK(ZCMK), 鍵コンポーネント, KCV, key-under-key, TR-31 |
+| [docs/03-pin-keys.md](docs/03-pin-keys.md) | PIN 系: ZPK/TPK/IWK/AWK, ISO 9564 PIN ブロック, PIN 変換, PVK/PVV |
+| [docs/04-emv-keys.md](docs/04-emv-keys.md) | EMV 系: IMK(MDK), UDK 派生, セッション鍵, ARQC/ARPC |
+| [docs/05-cvv.md](docs/05-cvv.md) | カード検証値: CVK と CVV/iCVV/CVV2 |
 | [docs/glossary.md](docs/glossary.md) | 略語集 |
 | [docs/references.md](docs/references.md) | 参照した規格・資料 |
 

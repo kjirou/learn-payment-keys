@@ -1,4 +1,4 @@
-# 01. 鍵交換: LMK, ZMK(ZCMK), KCV, key-under-key
+# 02. 鍵交換: LMK, ZMK(ZCMK), KCV, key-under-key
 
 ## 登場する鍵
 
