@@ -29,6 +29,8 @@ IMK_AC ──(PAN, PSN)──▶ MK_AC ──(ATC)──▶ SK_AC ──▶ ARQC
 
 ### ICC Master Key (MK) の派生: EMV Book 2 Annex A1.4.1 Option A
 
+「EMV Book 2 Annex A1.4.1 Option A」は EMV 仕様書の節への参照。仕様書の構成と各節の対応は `docs/references.md` にまとめた。
+
 ```
 Y   = (PAN || PSN) の右 16 桁            (PSN = PAN Sequence Number, 2 桁)
 ZL  = 3DES_IMK( Y )
