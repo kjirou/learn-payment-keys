@@ -1,14 +1,14 @@
-# 04. EMV 系: IMK(MDK), UDK, セッション鍵, ARQC / ARPC
+# 04. EMV 系: IMK(MDK), ICC Master Key(UDK), セッション鍵, ARQC / ARPC
 
 ## 登場する鍵
 
 | 鍵 | EMV の名前 | Visa の名前 | 役割 |
 |---|---|---|---|
 | イシュアマスター鍵 | IMK (Issuer Master Key) | MDK (Master Derivation Key) | イシュアが保持。カード鍵を派生させる元。 |
-| カード鍵 | ICC Master Key (MK) | UDK (Unique Derivation Key) | カードごとに一意。IC チップ内と、イシュア側の計算で存在。 |
+| カード鍵 | ICC Master Key (MK)。ICC = Integrated Circuit Card | UDK (Unique Derivation Key) | カードごとに一意。IC チップ内と、イシュア側の計算で存在。 |
 | セッション鍵 | Session Key (SK) | - | 取引ごとに派生。クリプトグラムの計算に使う。 |
 
-IMK / UDK はそれぞれ用途別に 3 本ある。
+IMK / ICC Master Key はそれぞれ用途別に 3 本ある。
 
 | 接尾辞 | 用途 |
 |---|---|
@@ -16,23 +16,24 @@ IMK / UDK はそれぞれ用途別に 3 本ある。
 | SMI | Secure Messaging for Integrity。発行者スクリプトの MAC |
 | SMC | Secure Messaging for Confidentiality。発行者スクリプト内の機密データ(新 PIN 等)の暗号化 |
 
-Visa 表記だと MDK_AC、MDK_SMI、MDK_SMC。本リポジトリの実装は AC 系のみ。
+Visa 表記だと MDK_AC、MDK_SMI、MDK_SMC(ICC Master Key 側は UDK_AC、UDK_SMI、UDK_SMC)。本ドキュメントでは EMV の一般名を使い、ICC Master Key は MK と略す。本リポジトリの実装は AC 系のみ。
 
 ## 鍵の派生(鍵階層 [B])
 
 ```
-IMK_AC ──(PAN, PSN)──▶ UDK_AC ──(ATC)──▶ SK_AC ──▶ ARQC / ARPC
+IMK_AC ──(PAN, PSN)──▶ MK_AC ──(ATC)──▶ SK_AC ──▶ ARQC / ARPC
+(Visa: MDK_AC)          (Visa: UDK_AC)
 ```
 
 [A] の木が「暗号化して運ぶ」のに対し、[B] の木は「計算で派生する」。イシュアは IMK だけ保管しておけば、どのカードの鍵も、どの取引のセッション鍵も必要なときに再計算できる。
 
-### UDK 派生: EMV Book 2 Annex A1.4.1 Option A
+### ICC Master Key (MK) の派生: EMV Book 2 Annex A1.4.1 Option A
 
 ```
 Y   = (PAN || PSN) の右 16 桁            (PSN = PAN Sequence Number, 2 桁)
 ZL  = 3DES_IMK( Y )
 ZR  = 3DES_IMK( Y XOR FFFFFFFFFFFFFFFF )
-UDK = 奇数パリティ調整( ZL || ZR )
+MK  = 奇数パリティ調整( ZL || ZR )
 ```
 
 Option B は PAN が 16 桁を超える場合向けで、SHA-1 とデシマライズを使う。
@@ -41,12 +42,12 @@ Option B は PAN が 16 桁を超える場合向けで、SHA-1 とデシマラ�
 
 ```
 R    = ATC(2 バイト) || 00 || 00 || 00 00 00 00
-SK_L = 3DES_UDK( ATC || F0 || 00 || 00 00 00 00 )
-SK_R = 3DES_UDK( ATC || 0F || 00 || 00 00 00 00 )
+SK_L = 3DES_MK( ATC || F0 || 00 || 00 00 00 00 )
+SK_R = 3DES_MK( ATC || 0F || 00 || 00 00 00 00 )
 SK   = 奇数パリティ調整( SK_L || SK_R )
 ```
 
-ATC (Application Transaction Counter) はカードが取引ごとに増やすカウンタ。同じ UDK でも取引ごとに別のセッション鍵になる。
+ATC (Application Transaction Counter) はカードが取引ごとに増やすカウンタ。同じ MK でも取引ごとに別のセッション鍵になる。
 
 ### CVN (Cryptogram Version Number)
 
@@ -54,7 +55,7 @@ Visa では **CVN** がクリプトグラムの計算方式を指定する。代
 
 | CVN | セッション鍵 | 特徴 |
 |---|---|---|
-| 10 | 使わない(UDK で直接 MAC) | 古い方式。 |
+| 10 | 使わない(MK で直接 MAC) | 古い方式。 |
 | 18 | Common Session Key | 上記の派生を使う。ARQC 入力に IAD 全体を含む。 |
 | 22 | Common Session Key | 新しいフォーマットの IAD を使う。 |
 
@@ -127,4 +128,4 @@ PIN 変更コマンドのように秘密データを含む場合は、まず SK_
 
 ## 実装
 
-- `js/src/emv.js`、`go/emv.go`: UDK 派生(Option A)、Common Session Key、Retail MAC、ARQC、ARPC 方式 1
+- `js/src/emv.js`、`go/emv.go`: ICC Master Key 派生(Option A)、Common Session Key、Retail MAC、ARQC、ARPC 方式 1

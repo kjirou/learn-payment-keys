@@ -19,7 +19,7 @@ LMK  (HSM 内のローカルマスター鍵。HSM の外には決して出ない
 [B] EMV 系(IC チップとイシュア間のクリプトグラム)
 
 IMK / MDK  (イシュアマスター鍵。AC / SMI / SMC の 3 本)
-└── UDK / ICC Master Key  (PAN + PSN からカードごとに派生)
+└── ICC Master Key (MK)  (PAN + PSN からカードごとに派生。Visa では UDK)
     └── セッション鍵       (ATC から取引ごとに派生)
         └── ARQC / ARPC / 発行者スクリプトの MAC・暗号化
 ```
@@ -52,7 +52,7 @@ Visa や HSM ベンダー固有に見える用語の多くは、公開標準の�
 | 01 | 前提知識: DES / 3DES、ECB、記法 | (tdes.js / tdes.go) |
 | 02 | ZMK、鍵コンポーネント、KCV、key-under-key | ○ |
 | 03 | ISO 9564 Format 0 PIN ブロック、ZPK 暗号化、PIN 変換、PVV | ○ |
-| 04 | UDK 派生(Option A)、Common Session Key、ARQC、ARPC 方式 1 | ○ |
+| 04 | ICC Master Key 派生(Option A)、Common Session Key、ARQC、ARPC 方式 1 | ○ |
 | 05 | CVV / iCVV | ○ |
 
 ## 扱わない(が存在は知っておくべき)もの

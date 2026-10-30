@@ -68,13 +68,13 @@ func main() {
 	show("CVV", cvv(cvkA, cvkB, PAN, expiry, serviceCode))
 	show("iCVV (service 999)", cvv(cvkA, cvkB, PAN, expiry, "999"))
 
-	section("5. EMV: IMK(MDK) -> UDK -> session key -> ARQC / ARPC")
+	section("5. EMV: IMK(MDK) -> ICC Master Key(UDK) -> session key -> ARQC / ARPC")
 	show("IMK_AC (MDK_AC)", toHex(imkAC))
-	udk := deriveUdkOptionA(imkAC, PAN, PSN)
-	show("UDK_AC (Option A)", toHex(udk))
-	show("UDK_AC KCV", toHex(kcv(udk)))
+	mk := deriveIccMasterKeyOptionA(imkAC, PAN, PSN)
+	show("ICC MK_AC (Option A)", toHex(mk))
+	show("ICC MK_AC KCV", toHex(kcv(mk)))
 	show("ATC", toHex(atc))
-	sk := deriveSessionKeyCsk(udk, atc)
+	sk := deriveSessionKeyCsk(mk, atc)
 	show("Session key (CSK)", toHex(sk))
 	// CVN 18 の ARQC 入力データ(Visa の例に倣った並び。IAD の 3 バイト目 0x12 = CVN 18)
 	var txData []byte

@@ -1,12 +1,12 @@
-// EMV 系: IMK(Visa では MDK) → UDK → セッション鍵 → ARQC / ARPC。
+// EMV 系: IMK(Visa では MDK) → ICC Master Key(Visa では UDK) → セッション鍵 → ARQC / ARPC。
 import { tdesEncrypt, desEncrypt, desDecrypt, xor, unhex, adjustOddParity } from "./tdes.js";
 
-// EMV Book 2 Annex A1.4.1 Option A による ICC マスター鍵(UDK)の派生。
+// EMV Book 2 Annex A1.4.1 Option A による ICC Master Key(MK。Visa では UDK)の派生。
 //   Y  = (PAN || PSN) の右 16 桁
 //   ZL = 3DES_IMK(Y)
 //   ZR = 3DES_IMK(Y XOR FF..FF)
-//   UDK = 奇数パリティ調整(ZL || ZR)
-export function deriveUdkOptionA(imk, pan, psn) {
+//   MK = 奇数パリティ調整(ZL || ZR)
+export function deriveIccMasterKeyOptionA(imk, pan, psn) {
   const y = unhex((pan + psn).slice(-16));
   const zl = tdesEncrypt(imk, y);
   const zr = tdesEncrypt(imk, xor(y, Buffer.alloc(8, 0xff)));
@@ -15,16 +15,16 @@ export function deriveUdkOptionA(imk, pan, psn) {
 
 // EMV Book 2 Annex A1.3 Common Session Key 派生(Visa CVN 18 などが使う)。
 //   R   = ATC(2) || 00 || 00 || 00 00 00 00
-//   SKL = 3DES_UDK(ATC || F0 || 00 || 00 00 00 00)
-//   SKR = 3DES_UDK(ATC || 0F || 00 || 00 00 00 00)
-export function deriveSessionKeyCsk(udk, atc) {
+//   SKL = 3DES_MK(ATC || F0 || 00 || 00 00 00 00)
+//   SKR = 3DES_MK(ATC || 0F || 00 || 00 00 00 00)
+export function deriveSessionKeyCsk(mk, atc) {
   const r = Buffer.alloc(8);
   atc.copy(r, 0);
   const rl = Buffer.from(r);
   rl[2] = 0xf0;
   const rr = Buffer.from(r);
   rr[2] = 0x0f;
-  return adjustOddParity(Buffer.concat([tdesEncrypt(udk, rl), tdesEncrypt(udk, rr)]));
+  return adjustOddParity(Buffer.concat([tdesEncrypt(mk, rl), tdesEncrypt(mk, rr)]));
 }
 
 // ISO/IEC 9797-1 MAC Algorithm 3 (Retail MAC)、パディング方式 2 (80 00 ...)。

@@ -7,7 +7,7 @@ import {
   translatePinBlock, pvv,
 } from "./pin.js";
 import { cvv } from "./cvv.js";
-import { deriveUdkOptionA, deriveSessionKeyCsk, arqc, arpcMethod1 } from "./emv.js";
+import { deriveIccMasterKeyOptionA, deriveSessionKeyCsk, arqc, arpcMethod1 } from "./emv.js";
 
 const show = (label, value) => console.log(`${label.padEnd(24)}: ${value}`);
 const section = (title) => console.log(`\n== ${title} ==`);
@@ -68,13 +68,13 @@ show("Service code", SERVICE_CODE);
 show("CVV", cvv(CVK_A, CVK_B, PAN, EXPIRY, SERVICE_CODE));
 show("iCVV (service 999)", cvv(CVK_A, CVK_B, PAN, EXPIRY, "999"));
 
-section("5. EMV: IMK(MDK) -> UDK -> session key -> ARQC / ARPC");
+section("5. EMV: IMK(MDK) -> ICC Master Key(UDK) -> session key -> ARQC / ARPC");
 show("IMK_AC (MDK_AC)", hex(IMK_AC));
-const udk = deriveUdkOptionA(IMK_AC, PAN, PSN);
-show("UDK_AC (Option A)", hex(udk));
-show("UDK_AC KCV", hex(kcv(udk)));
+const mk = deriveIccMasterKeyOptionA(IMK_AC, PAN, PSN);
+show("ICC MK_AC (Option A)", hex(mk));
+show("ICC MK_AC KCV", hex(kcv(mk)));
 show("ATC", hex(ATC));
-const sk = deriveSessionKeyCsk(udk, ATC);
+const sk = deriveSessionKeyCsk(mk, ATC);
 show("Session key (CSK)", hex(sk));
 // CVN 18 の ARQC 入力データ(Visa の例に倣った並び。IAD の 3 バイト目 0x12 = CVN 18)
 const txData = Buffer.concat([
