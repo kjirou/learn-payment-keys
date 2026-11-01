@@ -26,7 +26,11 @@ make check   # 両方を実行して出力を diff(差分なしなら OK)
 
 ## 可視化
 
+公開版: https://kjirou.github.io/learn-payment-keys/
+
 `viz/index.html` をブラウザで開くと、02〜05 章の鍵と操作を「値ノード」と「操作ノード」の DAG として表示できます。依存ライブラリはなく、ファイルを直接開くだけで動きます。ノードをクリックすると値・式・途中の値と文書の該当節が右側に出ます。埋め込んである値はデモと同じダミー入力から計算したもので、`node viz/dump-values.mjs` で再生成できます。
+
+公開版は GitHub Actions(`.github/workflows/pages.yml`)が `viz/` 配下だけを GitHub Pages に配信しています。`main` の `viz/` に変更が入ると自動で更新されます。
 
 ## ドキュメント
 

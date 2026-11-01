@@ -1,0 +1,39 @@
+# viz/ 配下だけを GitHub Pages に配信する。
+# ブランチ全体を配信する旧方式(Deploy from a branch)ではなく、
+# 指定ディレクトリをアーティファクトとしてアップロードする方式。Jekyll は関与しない。
+name: Deploy viz to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "viz/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+        with:
+          # 初回実行時に Pages を「GitHub Actions」ソースで有効化する
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: viz
+      - id: deployment
+        uses: actions/deploy-pages@v4
