@@ -1,0 +1,848 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>決済鍵の可視化</title>
+<!--
+  docs/02〜05 の鍵と操作を「値ノード」と「操作ノード」の DAG として描く。
+  依存ライブラリなし。file:// で直接開ける。
+  埋め込んでいる値はデモ(js/src/main.js)と同じダミー入力から計算したもので、
+  viz/dump-values.mjs を実行すると同じ JSON が得られる。
+-->
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1f2328; --muted: #656d76; --line: #d0d7de;
+    --key-fill: #fff4d6; --key-stroke: #c99a2e;
+    --data-fill: #e8f1fb; --data-stroke: #4a79b8;
+    --op-fill: #eaf6e8; --op-stroke: #4e8f4a;
+    --cmp-fill: #f9e9f1; --cmp-stroke: #a33c73;
+    --note-fill: #fffbe6; --note-stroke: #d9c36a;
+    --sel: #0969da; --secret: #c62828;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", "Segoe UI", sans-serif; color: var(--ink); background: var(--bg); display: flex; flex-direction: column; font-size: 14px; }
+  header { padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0; white-space: nowrap; }
+  .tabs { display: flex; gap: 4px; }
+  .tabs button { border: 1px solid var(--line); background: #fff; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .tabs button.on { background: var(--sel); color: #fff; border-color: var(--sel); }
+  .ctl { display: flex; gap: 12px; align-items: center; margin-left: auto; font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
+  .ctl label { display: flex; gap: 4px; align-items: center; cursor: pointer; }
+  .ctl button { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 3px 9px; cursor: pointer; font-size: 12.5px; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #wrap { flex: 1; position: relative; overflow: hidden; }
+  svg { width: 100%; height: 100%; display: block; cursor: grab; user-select: none; }
+  svg.drag { cursor: grabbing; }
+  #hint { position: absolute; left: 12px; bottom: 10px; font-size: 11.5px; color: var(--muted); background: rgba(255,255,255,.85); padding: 3px 8px; border-radius: 6px; pointer-events: none; }
+  aside { width: 400px; background: var(--panel); border-left: 1px solid var(--line); overflow: auto; padding: 14px 18px 30px; font-size: 13px; line-height: 1.6; }
+  aside h2 { font-size: 16px; margin: 0 0 2px; }
+  aside h3 { font-size: 13px; margin: 16px 0 4px; color: var(--muted); border-bottom: 1px solid var(--line); padding-bottom: 2px; }
+  aside .sub { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  aside p { margin: 6px 0; }
+  aside ul { margin: 4px 0; padding-left: 18px; }
+  aside code, aside pre, .mono { font-family: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+  aside pre { background: #f3f4f6; border-radius: 6px; padding: 8px 10px; font-size: 11.5px; white-space: pre-wrap; word-break: break-all; margin: 4px 0; }
+  aside code { font-size: 11.5px; word-break: break-all; }
+  aside table { border-collapse: collapse; width: 100%; font-size: 11.5px; }
+  aside td { vertical-align: top; padding: 3px 4px; border-bottom: 1px solid #eceff2; }
+  aside td:first-child { color: var(--muted); white-space: nowrap; width: 38%; }
+  aside .badges { display: flex; gap: 5px; flex-wrap: wrap; margin: 6px 0 8px; }
+  .badge { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; background: #eef0f3; color: #444; border: 1px solid #dfe3e8; }
+  .badge.key { background: var(--key-fill); border-color: var(--key-stroke); }
+  .badge.data { background: var(--data-fill); border-color: var(--data-stroke); }
+  .badge.op { background: var(--op-fill); border-color: var(--op-stroke); }
+  .badge.cmp { background: var(--cmp-fill); border-color: var(--cmp-stroke); }
+  .badge.secret { background: #fdecea; color: var(--secret); border-color: #f2b8b5; }
+  .badge.random { background: #f1eafc; border-color: #c9b4ee; }
+  .badge.external { background: #e6f4f1; border-color: #9fd3c7; }
+  .badge.state { background: #fff0e0; border-color: #f0c08a; }
+  .legend { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 12px; align-items: center; }
+  .legend svg { width: 44px; height: 22px; cursor: default; }
+  aside a { color: var(--sel); }
+  .doc { font-size: 12px; margin-top: 12px; }
+
+  /* SVG */
+  .frame rect { fill: rgba(120, 130, 150, .06); stroke: #b6bcc6; stroke-dasharray: 5 4; stroke-width: 1; }
+  .frame text { font-size: 11px; font-weight: 700; fill: #6b7380; }
+  .edge { fill: none; stroke: #6b7380; stroke-width: 1.6; }
+  .edge.protect { stroke: var(--key-stroke); stroke-dasharray: 7 5; }
+  .edge.noteline { stroke: #c4b56a; stroke-dasharray: 2 4; stroke-width: 1.2; }
+  .edge.hl { stroke: var(--sel); stroke-width: 2.6; }
+  .edge.dim { opacity: .28; }
+  .node { cursor: pointer; }
+  .node .body { stroke-width: 1.4; }
+  .node.key .body { fill: var(--key-fill); stroke: var(--key-stroke); }
+  .node.data .body { fill: var(--data-fill); stroke: var(--data-stroke); }
+  .node.op .body { fill: var(--op-fill); stroke: var(--op-stroke); }
+  .node.cmp .body { fill: var(--cmp-fill); stroke: var(--cmp-stroke); }
+  .node.note .body { fill: var(--note-fill); stroke: var(--note-stroke); stroke-dasharray: 3 3; }
+  .node .stack { fill: #fff; stroke: var(--key-stroke); stroke-width: 1; opacity: .7; }
+  .node.sel .body { stroke: var(--sel); stroke-width: 3; }
+  .node.nb .body { stroke-width: 2.4; }
+  .node.dim { opacity: .45; }
+  .node text { pointer-events: none; }
+  .node .label { font-size: 12.5px; font-weight: 700; fill: var(--ink); }
+  .node .subt { font-size: 10px; fill: var(--muted); }
+  .node .val { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 10px; fill: #24292f; }
+  .node .val.secret { fill: var(--secret); }
+  .node.cmp .val { font-family: inherit; font-weight: 700; fill: var(--cmp-stroke); }
+  .node .ntext { font-size: 10.5px; fill: #5c4d12; }
+  .bdg rect { rx: 7; ry: 7; fill: #eef0f3; stroke: #d5dae0; stroke-width: .8; }
+  .bdg text { font-size: 9px; fill: #444; }
+  .bdg.secret rect { fill: #fdecea; stroke: #f2b8b5; } .bdg.secret text { fill: var(--secret); }
+  .bdg.random rect { fill: #f1eafc; stroke: #c9b4ee; }
+  .bdg.external rect { fill: #e6f4f1; stroke: #9fd3c7; }
+  .bdg.state rect { fill: #fff0e0; stroke: #f0c08a; }
+  .bdg.hsm rect { fill: #ebe7f7; stroke: #b9aee0; }
+  .bdg.card rect { fill: #fdeedd; stroke: #ecc49a; }
+  .bdg.term rect { fill: #e1f2f4; stroke: #9fcfd6; }
+</style>
+</head>
+<body>
+<header>
+  <h1>決済カードの鍵: 値と操作の DAG</h1>
+  <nav class="tabs" id="tabs"></nav>
+  <div class="ctl">
+    <label><input type="checkbox" id="tNotes" checked> 注釈</label>
+    <label><input type="checkbox" id="tFrames" checked> 場所の枠</label>
+    <label><input type="checkbox" id="tProtect" checked> 保護関係(破線)</label>
+    <button id="zoomOut" title="縮小">−</button>
+    <button id="zoomIn" title="拡大">＋</button>
+    <button id="fit">全体表示</button>
+  </div>
+</header>
+<main>
+  <div id="wrap">
+    <svg id="canvas" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="hint">ノードをクリックで詳細。ドラッグで移動、ホイールで拡大縮小。</div>
+  </div>
+  <aside id="panel"></aside>
+</main>
+<script>
+// ---------------------------------------------------------------------------
+// 値(デモと同じダミー入力から計算。viz/dump-values.mjs の出力)
+// ---------------------------------------------------------------------------
+const V = {
+  k02: {
+    ZMK: "0123456789ABCDEFCDEF89AB45670123", ZMK_KCV: "41363D",
+    C1: "5A3C9E1B7D2F80C4E6A10F9B3D57C2E8", C1_KCV: "34BD29",
+    C2: "C70B2D91F4A6E35B08D9C6A2E71F4B36", C2_KCV: "4BC70F",
+    C3: "9C14F6ED0022AE70239740929F2F88FD", C3_KCV: "AE403E",
+    C1xC2: "9D37B38A8989639FEE78C939DA4889DE", restored: "0123456789ABCDEFCDEF89AB45670123",
+    ZPK_A: "1A2B3C4D5E6F708192A3B4C5D6E7F808", ZPK_A_KCV: "E8934A",
+    ZPK_A_under_ZMK: "CFCFF4FDD2262CBEF7FE42810BCD7E3C", ZPK_A_dec: "1A2B3C4D5E6F708192A3B4C5D6E7F808",
+    ZPK_B: "F1E2D3C4B5A69788796A5B4C3D2E1F00", ZPK_B_KCV: "E99443",
+    zeros: "0000000000000000", kcv_full: "41363DC111C83344",
+  },
+  k03: {
+    PAN: "4111111111111111", PIN: "1234", pinField: "041234FFFFFFFFFF", panField: "0000111111111111", clear: "041225EEEEEEEEEE",
+    encA: "2B3B68C46AA5CDB7", decA: "041225EEEEEEEEEE", encB: "1C41CAA804F54892", decB: "041225EEEEEEEEEE", recovered: "1234",
+    PVK: "0123456789ABCDEFFEDCBA9876543210", PVKI: 1, tsp: "1111111111111234", tspEnc: "946B41C3A8F83E68", tspDec: "9464138836812054", PVV: "9464",
+  },
+  k04: {
+    IMK: "8A7B6C5D4E3F20191A2B3C4D5E6F7081", PAN: "4111111111111111", PSN: "00", panPsn: "411111111111111100",
+    Y: "1111111111111100", Yinv: "EEEEEEEEEEEEEEFF", ZL: "B75FB1795A58CAD3", ZR: "5884BCE8ACE9627A",
+    ZLZR: "B75FB1795A58CAD35884BCE8ACE9627A", MK: "B65EB0795B58CBD35885BCE9ADE9627A", MK_KCV: "77BBEC",
+    ATC: "001C", R: "001C000000000000", RL: "001CF00000000000", RR: "001C0F0000000000",
+    SKL: "660D9CAAF1112DF6", SKR: "D71C18AEA79D1FA8", SKLSKR: "660D9CAAF1112DF6D71C18AEA79D1FA8", SK: "670D9DABF1102CF7D61C19AEA79D1FA8", SK_KCV: "95C6FB",
+    txParts: [
+      ["9F02", "Amount, Authorised", "000000010000"], ["9F03", "Amount, Other", "000000000000"], ["9F1A", "Terminal Country Code", "0392"],
+      ["95", "TVR", "0000000000"], ["5F2A", "Transaction Currency Code", "0392"], ["9A", "Transaction Date", "261027"],
+      ["9C", "Transaction Type", "00"], ["9F37", "Unpredictable Number", "12345678"], ["82", "AIP", "3800"],
+      ["9F36", "ATC", "001C"], ["9F10", "IAD", "06011203A0B800"],
+    ],
+    tx: "00000001000000000000000003920000000000039226102700123456783800001C06011203A0B800", txLen: 40,
+    msg: "00000001000000000000000003920000000000039226102700123456783800001C06011203A0B8008000000000000000", msgBlocks: 6,
+    chain: ["7A89263520C0F255", "1E722BAD968CCDC7", "837557DABF02B527", "F3822DBE44692CA1", "E989C9F8DFFE0BEF", "3339DE0866BBA100"],
+    macDec: "BEF5277D1AC05260", ARQC: "CE905B49875708FE",
+    ARC: "3030", arcPad: "3030000000000000", arqcXor: "FEA05B49875708FE", ARPC: "F191BF187168461B",
+  },
+  k05: {
+    CVK_A: "0123456789ABCDEF", CVK_B: "FEDCBA9876543210", PAN: "4111111111111111", EXPIRY: "2812",
+    cvv: { serviceCode: "201", data: "41111111111111112812201000000000", B1: "4111111111111111", B2: "2812201000000000",
+      T1: "F0157C5DA1787BED", T1xB2: "D8075C4DA1787BED", T2: "D2B02734254E1F31", T3: "2A343D384F3DB4A4", T4: "8E1E27608C92A520",
+      dec: "8127608925204420", CVV: "812" },
+    icvv: { serviceCode: "999", data: "41111111111111112812999000000000", B1: "4111111111111111", B2: "2812999000000000",
+      T1: "F0157C5DA1787BED", T1xB2: "D807E5CDA1787BED", T2: "1078616FA0B8402F", T3: "350813AFFA960B08", T4: "7D51AC81363BFB0C",
+      dec: "7518136303021512", CVV: "751" },
+  },
+};
+
+const DOCS = {
+  "01": "docs/01-crypto-basics.md", "02": "docs/02-key-exchange.md", "03": "docs/03-pin-keys.md",
+  "04": "docs/04-emv-keys.md", "05": "docs/05-cvv.md",
+};
+
+// ノード生成の小道具。c, r はグリッド座標(列, 行)。
+const key  = (id, label, o) => Object.assign({ id, kind: "key",  label }, o);
+const data = (id, label, o) => Object.assign({ id, kind: "data", label }, o);
+const op   = (id, label, o) => Object.assign({ id, kind: "op",   label }, o);
+const cmp  = (id, label, o) => Object.assign({ id, kind: "cmp",  label }, o);
+const note = (id, c, r, text, target) => ({ id, kind: "note", c, r, text, target });
+const e    = (from, to, o) => Object.assign({ from, to, kind: "flow" }, o);
+const prot = (from, to) => ({ from, to, kind: "protect" });
+const RANDOM = { k: "random", t: "乱数生成" };
+const CALC = { k: "derived", t: "計算で得る" };
+const ext = (t) => ({ k: "external", t });
+const state = (t) => ({ k: "state", t });
+
+// ---------------------------------------------------------------------------
+// 02 鍵交換
+// ---------------------------------------------------------------------------
+const K = V.k02;
+const TAB02 = {
+  id: "02", title: "02 鍵交換", doc: "02",
+  intro: "ZMK を人手(鍵コンポーネント)で共有し、以後の作業鍵 ZPK は ZMK で暗号化してオンラインで運ぶ。実線は計算の流れ、破線は保護関係(上の鍵で暗号化して保管・運搬する関係)で、00 の階層図 [A] の親子線に当たる。",
+  frames: [
+    { label: "送り側の HSM", c0: 0, c1: 2, r0: 0, r1: 5 },
+    { label: "輸送(人手 / ネットワーク)", c0: 3, c1: 3, r0: 0, r1: 5 },
+    { label: "受け側の HSM", c0: 4, c1: 7, r0: 0, r1: 5 },
+  ],
+  nodes: [
+    key("lmk", "LMK", { sub: "Local Master Key", c: 0, r: 0, where: "送り側 HSM 内", origin: RANDOM, value: null, vnote: "値は HSM の外に出ない(本リポジトリでは扱わない)",
+      doc: { f: "02", s: "登場する鍵" },
+      desc: "HSM 内部に格納される最上位の鍵。HSM に保管する他のすべての鍵は LMK で暗号化された形で DB などに保存される。計算の木には現れず、保護関係(破線)の根としてだけ登場する。",
+      extra: ["Thales payShield の呼び名。Utimaco Atalla では MFK。"] }),
+    key("zmk", "ZMK", { sub: "Zone Master Key / ZCMK / KEK", c: 1, r: 1, where: "送り側 HSM 内", origin: RANDOM, value: K.ZMK, steps: [["KCV", K.ZMK_KCV]],
+      doc: { f: "02", s: "登場する鍵" },
+      desc: "2 組織の間(ゾーン)で共有するマスター鍵。作業鍵をこの鍵で暗号化して相手に渡す。最上位なので上位の鍵で暗号化して運べず、コンポーネントに分けて人手で渡す。",
+      protect: ["LMK で暗号化して保管(ZMK under LMK)"], extra: ["Visa では ZCMK、一般名は KEK (Key Encryption Key)。"] }),
+    key("c1", "C1(コンポーネント 1)", { sub: "管理者 1 が封緘して輸送", c: 0, r: 2, where: "送り側 HSM → 人手", origin: RANDOM, value: K.C1, steps: [["KCV", K.C1_KCV]],
+      doc: { f: "02", s: "3 人の管理者に分割する手順" },
+      desc: "ZMK とは無関係な乱数。単独では ZMK の情報を一切持たない(ワンタイムパッドと同じ原理)。" }),
+    key("c2", "C2(コンポーネント 2)", { sub: "管理者 2 が封緘して輸送", c: 0, r: 3, where: "送り側 HSM → 人手", origin: RANDOM, value: K.C2, steps: [["KCV", K.C2_KCV]],
+      doc: { f: "02", s: "3 人の管理者に分割する手順" },
+      desc: "C1 と同じく ZMK とは無関係な乱数。" }),
+    op("opSplit", "XOR で分割", { c: 2, r: 2, where: "送り側 HSM 内", formula: ["C3 = ZMK ⊕ C1 ⊕ C2"],
+      steps: [["ZMK", K.ZMK], ["C1", K.C1], ["C2", K.C2], ["C1 ⊕ C2", K.C1xC2], ["C3 = (C1 ⊕ C2) ⊕ ZMK", K.C3]],
+      doc: { f: "02", s: "3 人の管理者に分割する手順" },
+      desc: "C1、C2 を乱数で作り、C3 を計算で求める。3 つとも見た目は乱数で、2 つ集めても残り 1 つが分からない限り ZMK は 2^128 通りのどれでもあり得る。",
+      extra: ["奇数パリティのコンポーネント同士を XOR すると偶数パリティになるため、HSM は合成後にパリティを再調整する(暗号結果には影響しない)。"] }),
+    key("c3", "C3(コンポーネント 3)", { sub: "管理者 3 が封緘して輸送", c: 3, r: 2, where: "人手", origin: CALC, value: K.C3, steps: [["KCV", K.C3_KCV]],
+      doc: { f: "02", s: "3 人の管理者に分割する手順" },
+      desc: "ZMK を 2 つの乱数で覆い隠した値。これも見た目は乱数で、単独では ZMK の情報を持たない。" }),
+    op("opKcvZmk", "KCV 計算", { c: 2, r: 0, where: "送り側 HSM 内", formula: ["KCV = 3DES_ZMK( 00 00 00 00 00 00 00 00 ) の先頭 3 バイト"],
+      steps: [["入力(ゼロ 8 バイト)", K.zeros], ["3DES_ZMK(ゼロ)", K.kcv_full], ["先頭 3 バイト = KCV", K.ZMK_KCV]],
+      doc: { f: "02", s: "KCV (Key Check Value)" },
+      desc: "鍵の値を見せずに「同じ鍵を持っているか」を確認するための値。ゼロを暗号化した結果の先頭だけを使う。" }),
+    data("kcvZmk", "ZMK の KCV", { sub: "送り側が相手に伝える", c: 3, r: 0, where: "人手", origin: CALC, value: K.ZMK_KCV,
+      doc: { f: "02", s: "KCV (Key Check Value)" },
+      desc: "コンポーネントの受け渡しや鍵の登録のたびに照合し、入力ミスや取り違えを検出する。コンポーネントごとにも KCV を付ける。" }),
+    op("opRestore", "XOR で復元", { c: 4, r: 2, where: "受け側 HSM 内", formula: ["ZMK = C1 ⊕ C2 ⊕ C3"],
+      steps: [["C1 ⊕ C2", K.C1xC2], ["(C1 ⊕ C2) ⊕ C3", K.restored]],
+      doc: { f: "02", s: "3 人の管理者に分割する手順" },
+      desc: "各管理者が自分のコンポーネントだけを HSM に入力し、HSM 内部で XOR する。XOR は順序を入れ替えてよいので、誰がどの順で入力しても同じ鍵になる。" }),
+    key("zmkR", "ZMK(復元)", { sub: "送り側と同じ値に戻る", c: 5, r: 2, where: "受け側 HSM 内", origin: CALC, value: K.restored, steps: [["KCV", K.ZMK_KCV]],
+      doc: { f: "02", s: "3 人の管理者に分割する手順" },
+      desc: "復元した ZMK は受け側の LMK で暗号化された形で保管され、平文は誰も目にしない。",
+      protect: ["受け側の LMK で暗号化して保管"], extra: ["往復: 分割と復元は同じ XOR 演算で、値は送り側の ZMK と完全に一致する。"] }),
+    cmp("cmpKcv", "KCV 照合", { sub: "伝えられた KCV と再計算した KCV", c: 6, r: 1, where: "受け側 HSM", result: "一致",
+      steps: [["送り側から伝えられた KCV", K.ZMK_KCV], ["復元した ZMK から再計算した KCV", K.ZMK_KCV]],
+      doc: { f: "02", s: "KCV (Key Check Value)" },
+      desc: "一致すれば鍵交換は完了。合わなければ入力ミスや取り違えなので最初からやり直す。鍵の値そのものは比較しない(見せない)のが要点。" }),
+    key("zpkA", "ZPK_A", { sub: "Zone PIN Key(作業鍵)", c: 1, r: 4, where: "送り側 HSM 内", origin: RANDOM, value: K.ZPK_A, steps: [["KCV", K.ZPK_A_KCV]],
+      doc: { f: "02", s: "key-under-key: 作業鍵を ZMK で運ぶ" },
+      desc: "実際に PIN ブロックを暗号化する作業鍵(03 で使う)。ZMK が共有できていれば、作業鍵はこのようにオンラインで交換できる。",
+      protect: ["LMK で暗号化して保管(ZPK under LMK)", "ZMK で暗号化して運搬(ZPK under ZMK)"] }),
+    op("opEnc", "3DES_ZMK で暗号化", { sub: "key-under-key(鍵を鍵で包む)", c: 2, r: 4, where: "送り側 HSM 内", formula: ["ZPK_A under ZMK = 3DES_ZMK( ZPK_A )"],
+      steps: [["鍵: ZMK", K.ZMK], ["入力: ZPK_A(平文)", K.ZPK_A], ["出力", K.ZPK_A_under_ZMK]],
+      doc: { f: "02", s: "key-under-key: 作業鍵を ZMK で運ぶ" },
+      desc: "鍵を鍵で暗号化する。平文の ZPK はアプリケーションにも見えない。",
+      extra: ["本リポジトリはヘッダーなしの 3DES ECB(バリアント方式の最も単純な形)。実務では鍵の用途などのヘッダーを付けて MAC をかけた鍵ブロック(TR-31)を使う。"] }),
+    data("zpkUnder", "ZPK_A under ZMK", { sub: "ZPK_A の暗号化表現", c: 3, r: 4, where: "ネットワーク上", origin: CALC, value: K.ZPK_A_under_ZMK,
+      doc: { f: "02", s: "key-under-key: 作業鍵を ZMK で運ぶ" },
+      desc: "新しい鍵ではなく、同じ ZPK_A を ZMK で包んだ形。ZMK で復号すると元の ZPK_A に戻る。",
+      extra: ["往復: 暗号化 → 復号で同じ値に戻る。"] }),
+    op("opDec", "3DES で復号", { c: 5, r: 4, where: "受け側 HSM 内", formula: ["ZPK_A = 3DES_ZMK⁻¹( ZPK_A under ZMK )"],
+      steps: [["鍵: ZMK(復元)", K.restored], ["入力", K.ZPK_A_under_ZMK], ["出力", K.ZPK_A_dec]],
+      doc: { f: "02", s: "key-under-key: 作業鍵を ZMK で運ぶ" },
+      desc: "ZMK で復号して ZPK_A を得る。以後は LMK で再暗号化して DB に保存する(ZPK under LMK)。" }),
+    key("zpkAR", "ZPK_A(復元)", { sub: "送り側と同じ値に戻る", c: 6, r: 4, where: "受け側 HSM 内", origin: CALC, value: K.ZPK_A_dec, steps: [["KCV", K.ZPK_A_KCV]],
+      doc: { f: "02", s: "key-under-key: 作業鍵を ZMK で運ぶ" },
+      desc: "両組織が同じ ZPK_A を持った状態。以後この鍵で PIN ブロックを暗号化してやり取りできる(03)。",
+      protect: ["受け側の LMK で暗号化して保管"], extra: ["往復: 暗号化 → 復号で送り側の ZPK_A と同じ値に戻る。"] }),
+    op("opKcvZpk", "KCV 計算", { c: 2, r: 5, where: "送り側 HSM 内", formula: ["KCV = 3DES_ZPK_A( 00…00 ) の先頭 3 バイト"],
+      steps: [["先頭 3 バイト = KCV", K.ZPK_A_KCV]], doc: { f: "02", s: "KCV (Key Check Value)" },
+      desc: "作業鍵にも KCV を添えて送る。" }),
+    data("kcvZpk", "ZPK_A の KCV", { sub: "暗号化鍵に添えて送る", c: 3, r: 5, where: "ネットワーク上", origin: CALC, value: K.ZPK_A_KCV,
+      doc: { f: "02", s: "KCV (Key Check Value)" }, desc: "受け側が復号結果を検算するための値。" }),
+    cmp("cmpKcvZpk", "KCV 照合", { sub: "添えられた KCV と再計算した KCV", c: 7, r: 4, where: "受け側 HSM", result: "一致",
+      steps: [["添えられた KCV", K.ZPK_A_KCV], ["復元した ZPK_A から再計算した KCV", K.ZPK_A_KCV]],
+      doc: { f: "02", s: "KCV (Key Check Value)" }, desc: "復号した鍵が送り側の鍵と同じであることを確認する。" }),
+    note("n1", 0, 1, "LMK は HSM から決して出ない。\n本リポジトリでは実装せず、\n破線(保護関係)の根としてだけ示す。", "lmk"),
+    note("n5", 3, 1, "3 つとも見た目は乱数。2 つ集めても\n残り 1 つが分からない限り ZMK は不明\n(デュアルコントロール / スプリットナレッジ)。", "c3"),
+    note("n2", 4, 1, "往復: 分割も復元も同じ XOR。\n復元した ZMK は送り側と同じ値に戻る。", "zmkR"),
+    note("n3", 7, 5, "往復: 暗号化 → 復号で同じ ZPK_A に戻る。\n\"under ZMK\" は新しい鍵ではなく、\n同じ鍵の暗号化表現。", "zpkAR"),
+    note("n4", 0, 5, "破線 = 保護関係。上の鍵で下の鍵を\n暗号化して保管・運搬する関係で、\n計算で派生する関係ではない(00 の [A])。", null),
+  ],
+  edges: [
+    e("zmk", "opKcvZmk"), e("opKcvZmk", "kcvZmk"),
+    e("zmk", "opSplit"), e("c1", "opSplit"), e("c2", "opSplit"), e("opSplit", "c3"),
+    e("c1", "opRestore", { lane: 3.5 }), e("c2", "opRestore"), e("c3", "opRestore"), e("opRestore", "zmkR"),
+    e("kcvZmk", "cmpKcv"), e("zmkR", "cmpKcv"),
+    e("zmk", "opEnc"), e("zpkA", "opEnc"), e("opEnc", "zpkUnder"), e("zpkUnder", "opDec"), e("zmkR", "opDec"), e("opDec", "zpkAR"),
+    e("zpkA", "opKcvZpk"), e("opKcvZpk", "kcvZpk"), e("kcvZpk", "cmpKcvZpk"), e("zpkAR", "cmpKcvZpk"),
+    prot("lmk", "zmk"), prot("lmk", "zpkA"), prot("zmk", "zpkA"),
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// 03 PIN
+// ---------------------------------------------------------------------------
+const P = V.k03;
+const TAB03 = {
+  id: "03", title: "03 PIN", doc: "03",
+  intro: "PIN は PAN と組み合わせた PIN ブロックにしてから暗号化し、中継点ごとに HSM の中で鍵を掛け替えながらイシュアへ届く。イシュアは PIN を保存せず、PVV を再計算して照合する。赤い印は平文で、PIN パッドや HSM の外には出ない値。",
+  frames: [
+    { label: "端末 / アクワイアラ", c0: 0, c1: 3, r0: 0, r1: 2 },
+    { label: "ネットワーク", c0: 4, c1: 4, r0: 0, r1: 0 },
+    { label: "決済ネットワークの HSM", c0: 5, c1: 5, r0: 0, r1: 2 },
+    { label: "ネットワーク", c0: 6, c1: 6, r0: 0, r1: 0 },
+    { label: "イシュアの HSM", c0: 6, c1: 10, r0: 1, r1: 4 },
+  ],
+  nodes: [
+    data("pin", "PIN", { sub: "利用者が PIN パッドに入力", c: 0, r: 0, where: "端末(PIN パッド)", origin: ext("利用者が入力"), secret: true, value: P.PIN,
+      doc: { f: "03", s: "PIN ブロック(ISO 9564-1)" },
+      desc: "PIN は単独で暗号化せず、PAN と組み合わせた 8 バイトの PIN ブロックにしてから暗号化する。" }),
+    data("pan", "PAN", { sub: "カード番号(16 桁)", c: 0, r: 1, where: "端末", origin: ext("カードから読取"), value: P.PAN,
+      doc: { f: "03", s: "PAN のチェックデジットと「右 12 桁」の位置" },
+      desc: "PIN ブロックと PVV では末尾のチェックデジットを除いた右側の桁を使う。04 の MK 派生ではチェックデジットを含めて使う。",
+      extra: ["他章でも使う: 04(MK 派生)、05(CVV)。"] }),
+    op("opFmt0", "PIN ブロック組み立て", { sub: "ISO 9564-1 Format 0", c: 1, r: 0, where: "端末(PIN パッド内)",
+      formula: ["PIN フィールド = 0 ‖ PIN 長 ‖ PIN ‖ F…F", "PAN フィールド = 0000 ‖ PAN(チェックデジット除く)の右 12 桁", "平文 PIN ブロック = PIN フィールド ⊕ PAN フィールド"],
+      steps: [["PIN フィールド", P.pinField], ["PAN フィールド", P.panField], ["XOR = 平文 PIN ブロック", P.clear]],
+      doc: { f: "03", s: "Format 0 (ISO-0)" },
+      desc: "同じ PIN でもカードが違えば暗号文が変わり、辞書攻撃や使い回しを防ぐ。" }),
+    data("clearBlock", "平文 PIN ブロック", { sub: "ISO 9564-1 Format 0", c: 2, r: 0, where: "端末(PIN パッド内)", origin: CALC, secret: true, value: P.clear,
+      doc: { f: "03", s: "Format 0 (ISO-0)" },
+      desc: "この 8 バイトが暗号化の入力。PIN パッドや HSM の外には出ない。" }),
+    key("zpkA", "ZPK_A", { sub: "アクワイアラ〜決済 NW 区間の鍵(AWK)", c: 2, r: 1, where: "端末 / アクワイアラ HSM", origin: RANDOM, value: V.k02.ZPK_A, steps: [["KCV", V.k02.ZPK_A_KCV]],
+      doc: { f: "03", s: "登場する鍵" },
+      desc: "02 で ZMK により共有した作業鍵。",
+      protect: ["ZMK で暗号化して相手組織へ運搬(02)", "LMK で暗号化して保管"],
+      extra: ["実際は端末が TPK で暗号化し、アクワイアラの HSM が TPK → ZPK に変換する。デモではその段を省略し、最初から ZPK_A で暗号化している。"] }),
+    op("opEncA", "3DES で暗号化", { c: 3, r: 0, where: "端末 / アクワイアラ HSM", formula: ["暗号化 PIN ブロック = 3DES_ZPK_A( 平文 PIN ブロック )"],
+      steps: [["鍵: ZPK_A", V.k02.ZPK_A], ["入力(平文)", P.clear], ["出力", P.encA]],
+      doc: { f: "03", s: "暗号化" }, desc: "PIN ブロック(PIN そのものではない)が 8 バイトの暗号化入力。" }),
+    data("encA", "PIN ブロック under ZPK_A", { c: 4, r: 0, where: "ネットワーク上", origin: CALC, value: P.encA,
+      doc: { f: "03", s: "暗号化" }, desc: "暗号化された PIN ブロック。平文に戻せるのは ZPK_A を持つ HSM だけ。" }),
+    op("opTrans", "PIN 変換(ZPK_A → ZPK_B)", { c: 5, r: 0, where: "決済ネットワークの HSM 内",
+      formula: ["平文 = 3DES_ZPK_A⁻¹( 入力 )     ← HSM 内のみ", "出力 = 3DES_ZPK_B( 平文 )"],
+      steps: [["入力(under ZPK_A)", P.encA], ["ZPK_A で復号(平文、HSM 内のみ)", P.decA], ["ZPK_B で暗号化", P.encB]],
+      doc: { f: "03", s: "PIN 変換(PIN translation)" },
+      desc: "中継点では前区間の鍵で復号し、次区間の鍵で暗号化し直す。平文の PIN が HSM の外に出ることはない。",
+      extra: ["往復: 復号で平文に戻るが、すぐ再暗号化され外から観測できない。", "変換時に PIN ブロック形式を変える(Format 0 → 1 など)こともできる。"] }),
+    key("zpkB", "ZPK_B", { sub: "決済 NW〜イシュア区間の鍵(IWK)", c: 4, r: 1, where: "決済 NW HSM / イシュア HSM", origin: RANDOM, value: V.k02.ZPK_B, steps: [["KCV", V.k02.ZPK_B_KCV]],
+      doc: { f: "03", s: "登場する鍵" }, desc: "決済ネットワークとイシュアが ZMK で共有している作業鍵。",
+      protect: ["ZMK で暗号化して相手組織へ運搬(02)", "LMK で暗号化して保管"] }),
+    data("encB", "PIN ブロック under ZPK_B", { c: 6, r: 0, where: "ネットワーク上", origin: CALC, value: P.encB,
+      doc: { f: "03", s: "PIN 変換(PIN translation)" }, desc: "イシュア向けの鍵で暗号化し直された PIN ブロック。" }),
+    op("opDecB", "復号して PIN を取り出す", { c: 7, r: 0, where: "イシュアの HSM 内",
+      formula: ["平文 PIN ブロック = 3DES_ZPK_B⁻¹( 入力 )", "PIN フィールド = 平文 ⊕ PAN フィールド → 長さ分の桁を取り出す"],
+      steps: [["入力(under ZPK_B)", P.encB], ["ZPK_B で復号", P.decB], ["PAN フィールド", P.panField], ["PIN フィールド = 平文 ⊕ PAN フィールド", P.pinField], ["PIN(長さ 4)", P.recovered]],
+      doc: { f: "03", s: "Format 0 (ISO-0)" },
+      desc: "イシュアの HSM で復号し、PAN フィールドを XOR で外して PIN を取り出す。PIN は HSM の外に出さず、そのまま PVV 計算へ渡す。" }),
+    data("panRecv", "PAN(承認要求から)", { sub: "端末で読んだ PAN と同じ値", c: 6, r: 2, where: "イシュア", origin: ext("承認要求で受信"), value: P.PAN,
+      doc: { f: "03", s: "PIN 検証: PVK と PVV(Visa 方式)" },
+      desc: "承認要求メッセージに載って届く PAN。PIN ブロックの分解と PVV の再計算に使う。" }),
+    data("pinR", "PIN(復元)", { c: 8, r: 0, where: "イシュアの HSM 内", origin: CALC, secret: true, value: P.recovered,
+      doc: { f: "03", s: "PIN 検証: PVK と PVV(Visa 方式)" },
+      desc: "HSM 内でだけ存在する平文 PIN。保存はせず、PVV 計算にだけ使う。" }),
+    key("pvk", "PVK", { sub: "PIN Verification Key", c: 7, r: 3, where: "イシュアの HSM 内", origin: RANDOM, value: P.PVK,
+      doc: { f: "03", s: "PIN 検証: PVK と PVV(Visa 方式)" }, desc: "イシュアが PIN の正しさを検証するための鍵。", protect: ["LMK で暗号化して保管"] }),
+    data("pvki", "PVKI", { sub: "PVK Index(鍵の世代番号)", c: 7, r: 4, where: "イシュア / ストライプ", origin: ext("設定値(ストライプにも記録)"), value: String(P.PVKI),
+      doc: { f: "03", s: "PIN 検証: PVK と PVV(Visa 方式)" }, desc: "どの PVK で計算したかを示す 1 桁の番号。鍵の世代管理に使う。" }),
+    op("opPvv", "PVV 計算", { c: 8, r: 2, where: "イシュアの HSM 内",
+      formula: ["TSP = PAN(チェックデジット除く)の右 11 桁 ‖ PVKI ‖ PIN の先頭 4 桁", "PVV = decimalize( 3DES_PVK( TSP ) ) の先頭 4 桁"],
+      steps: [["TSP", P.tsp], ["3DES_PVK(TSP)", P.tspEnc], ["decimalize", P.tspDec], ["先頭 4 桁 = PVV", P.PVV]],
+      doc: { f: "03", s: "PIN 検証: PVK と PVV(Visa 方式)" },
+      desc: "イシュアは PIN そのものを保存せず、PVV という 4 桁の値だけを保存する。検証時は受け取った PIN から PVV を再計算して比較する。",
+      extra: ["decimalize: 16 進 16 文字から 0-9 を左から拾い、足りなければ A-F を 0-5 に読み替えて拾う(CVV と共通)。"] }),
+    data("pvvCalc", "PVV(計算値)", { c: 9, r: 2, where: "イシュアの HSM 内", origin: CALC, value: P.PVV,
+      doc: { f: "03", s: "PIN 検証: PVK と PVV(Visa 方式)" }, desc: "今回受け取った PIN から再計算した PVV。" }),
+    data("pvvStored", "PVV(保存値)", { sub: "DB またはストライプ / チップに記録", c: 9, r: 3, where: "イシュアの DB", origin: ext("発行時に保存"), value: P.PVV,
+      doc: { f: "03", s: "PIN 検証: PVK と PVV(Visa 方式)" }, desc: "発行時に同じ計算で作って保存しておいた PVV。" }),
+    cmp("cmpPvv", "PVV 照合", { c: 10, r: 2, where: "イシュア", result: "一致", steps: [["再計算した PVV", P.PVV], ["保存していた PVV", P.PVV]],
+      doc: { f: "03", s: "PIN 検証: PVK と PVV(Visa 方式)" },
+      desc: "一致すれば PIN は正しい。PIN を保存していないので、DB が漏れても PIN は分からない。" }),
+    note("nPan", 0, 2, "PAN は 04(MK 派生)と 05(CVV)でも使う。\nチェックデジットを除くかどうかは\n規格ごとに違う。", "pan"),
+    note("nSecret", 1, 1, "赤い印 = 平文。PIN パッドや HSM の\n内部にしか存在せず、外から観測できない。", "clearBlock"),
+    note("nTpk", 3, 1, "実際は端末が TPK で暗号化し、\nアクワイアラの HSM が TPK → ZPK に\n変換する。デモではその段を省略。", "opEncA"),
+    note("nTrans", 5, 2, "往復: ZPK_A で復号すると平文に戻り、\nZPK_B で暗号化し直す。平文は HSM 内で\n完結し、外から観測できない。", "opTrans"),
+    note("nPvv", 10, 3, "イシュアは PIN を保存せず PVV を保存。\n受け取った PIN から再計算して比較する。", "cmpPvv"),
+  ],
+  edges: [
+    e("pin", "opFmt0"), e("pan", "opFmt0"), e("opFmt0", "clearBlock"),
+    e("clearBlock", "opEncA"), e("zpkA", "opEncA"), e("opEncA", "encA"),
+    e("encA", "opTrans"), e("zpkA", "opTrans", { lane: 2 }), e("zpkB", "opTrans"), e("opTrans", "encB"),
+    e("encB", "opDecB"), e("zpkB", "opDecB"), e("panRecv", "opDecB"), e("opDecB", "pinR"),
+    e("pinR", "opPvv"), e("panRecv", "opPvv"), e("pvk", "opPvv"), e("pvki", "opPvv"), e("opPvv", "pvvCalc"),
+    e("pvvCalc", "cmpPvv"), e("pvvStored", "cmpPvv"),
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// 04 EMV
+// ---------------------------------------------------------------------------
+const E = V.k04;
+const TAB04 = {
+  id: "04", title: "04 EMV", doc: "04",
+  intro: "IMK から PAN と PSN でカードごとの ICC Master Key(MK)を、MK から ATC で取引ごとのセッション鍵(SK)を計算で派生させる(00 の [B])。カードは SK で ARQC を作り、イシュアは同じ鍵を再計算して検証し、ARPC で応答する。重ねて描いたノードは「1 本の鍵から多数派生する」ことを表す。",
+  frames: [
+    { label: "イシュア HSM のみ", c0: 0, c1: 0, r0: 0, r1: 0 },
+    { label: "カード内とイシュア HSM の双方で同じ計算", c0: 1, c1: 4, r0: 0, r1: 0 },
+    { label: "カード内のデータ / 状態", c0: 0, c1: 2, r0: 2, r1: 4 },
+    { label: "端末", c0: 2, c1: 2, r0: 5, r1: 5 },
+    { label: "承認要求: カードが計算 → イシュアが検証", c0: 5, c1: 7, r0: 1, r1: 3 },
+    { label: "承認応答: イシュアが計算 → カードが検証", c0: 6, c1: 9, r0: 5, r1: 6 },
+  ],
+  nodes: [
+    key("imk", "IMK_AC", { sub: "Issuer Master Key(Visa: MDK_AC)", c: 0, r: 0, where: "イシュア HSM のみ", origin: RANDOM, value: E.IMK,
+      doc: { f: "04", s: "登場する鍵" },
+      desc: "イシュアが保持するマスター鍵。カード鍵を派生させる元で、カードには入らない。イシュアはこの 1 本を保管しておけば、どのカードの鍵も取引のたびに再計算できる。",
+      protect: ["LMK で暗号化して保管"], extra: ["AC / SMI / SMC の 3 本があり、同じ派生の木が 3 系統ある。本リポジトリは AC 系のみ。"] }),
+    data("pan4", "PAN", { sub: "カード番号(16 桁)", c: 0, r: 2, where: "カード(発行時に書き込み)", origin: ext("カードのデータ"), value: E.PAN,
+      doc: { f: "04", s: "ICC Master Key (MK) の派生: EMV Book 2 Annex A1.4.1 Option A" },
+      desc: "MK 派生ではチェックデジットを含めたまま PSN を連結する(03 の PIN ブロックとは扱いが違う)。", extra: ["他章でも使う: 03(PIN ブロック、PVV)、05(CVV)。"] }),
+    data("psn", "PSN", { sub: "PAN Sequence Number(2 桁)", c: 0, r: 3, where: "カード(発行時に書き込み)", origin: ext("カードのデータ"), value: E.PSN,
+      doc: { f: "04", s: "ICC Master Key (MK) の派生: EMV Book 2 Annex A1.4.1 Option A" },
+      desc: "同じ PAN で複数枚のカード(再発行、家族カードなど)を区別する番号。PSN が違えば別の鍵が派生される。" }),
+    op("opMk", "MK 派生(Option A)", { c: 1, r: 0, where: "カード発行時(イシュア HSM) / 承認時に再計算",
+      formula: ["Y  = (PAN ‖ PSN) の右 16 桁", "ZL = 3DES_IMK( Y )", "ZR = 3DES_IMK( Y ⊕ FF…FF )", "MK = 奇数パリティ調整( ZL ‖ ZR )"],
+      steps: [["PAN ‖ PSN(18 桁)", E.panPsn], ["Y = 右 16 桁", E.Y], ["Y ⊕ FF…FF", E.Yinv], ["ZL = 3DES_IMK(Y)", E.ZL], ["ZR = 3DES_IMK(Y ⊕ FF…FF)", E.ZR], ["ZL ‖ ZR(調整前)", E.ZLZR], ["奇数パリティ調整 = MK", E.MK]],
+      doc: { f: "04", s: "ICC Master Key (MK) の派生: EMV Book 2 Annex A1.4.1 Option A" },
+      desc: "イシュアが 1 本だけ持つ IMK から、カードごとに違う 16 バイト鍵を計算で作る。Y とそのビット反転を別々に暗号化して 8 バイトずつ 2 つの結果を得る。",
+      extra: ["PAN が長い場合などのために SHA-1 でハッシュする Option B、AES 版の Option C もある(未実装)。"] }),
+    key("mk", "ICC Master Key MK_AC", { sub: "カードごとに 1 本(Visa: UDK_AC)", c: 2, r: 0, where: "カード内 / イシュア HSM で再計算", origin: CALC, many: true, value: E.MK, steps: [["KCV", E.MK_KCV]],
+      doc: { f: "04", s: "ICC Master Key (MK) の派生: EMV Book 2 Annex A1.4.1 Option A" },
+      desc: "カードには製造時(パーソナライゼーション)に書き込む。イシュアは保存せず、取引のたびに PAN と PSN から再計算する。あるカードの MK が漏れても IMK や他のカードの MK は分からない。",
+      extra: ["1 対多: 1 本の IMK から PAN + PSN ごとに無数の MK が派生する。"] }),
+    data("atc", "ATC", { sub: "取引カウンタ(9F36)", c: 1, r: 3, where: "カード内(不揮発メモリ)", origin: state("カードが取引ごとに +1"), value: E.ATC,
+      doc: { f: "04", s: "セッション鍵派生: EMV Book 2 Annex A1.3 (Common Session Key)" },
+      desc: "カードが取引を始めるたびに 1 増やす 2 バイトのカウンタ(0〜65535)。減ることもリセットされることもない。GENERATE AC の応答に含まれて端末へ返り、承認要求でイシュアに届く。",
+      extra: ["状態: 外から与える引数ではなく、カード自身が保持し更新する値。", "イシュアは最後に見た ATC を保存し、再送や複製カードの検知にも使う。"] }),
+    op("opSk", "セッション鍵派生", { sub: "Common Session Key(Annex A1.3)", c: 3, r: 0, where: "カード内 / イシュア HSM で再計算",
+      formula: ["R    = ATC ‖ 00 ‖ 00 ‖ 00 00 00 00", "SK_L = 3DES_MK( ATC ‖ F0 ‖ 00 ‖ 00 00 00 00 )", "SK_R = 3DES_MK( ATC ‖ 0F ‖ 00 ‖ 00 00 00 00 )", "SK   = 奇数パリティ調整( SK_L ‖ SK_R )"],
+      steps: [["R", E.R], ["左の入力(3 バイト目 F0)", E.RL], ["右の入力(3 バイト目 0F)", E.RR], ["SK_L = 3DES_MK(左)", E.SKL], ["SK_R = 3DES_MK(右)", E.SKR], ["SK_L ‖ SK_R(調整前)", E.SKLSKR], ["奇数パリティ調整 = SK", E.SK]],
+      doc: { f: "04", s: "セッション鍵派生: EMV Book 2 Annex A1.3 (Common Session Key)" },
+      desc: "MK は固定なので、取引ごとに変わり双方が知る ATC を混ぜて使い捨ての鍵を作る。Visa CVN 18 / 22、Mastercard M/Chip が使う方式。" }),
+    key("sk", "セッション鍵 SK_AC", { sub: "取引ごとに 1 本", c: 4, r: 0, where: "カード内 / イシュア HSM で再計算", origin: CALC, many: true, value: E.SK, steps: [["KCV", E.SK_KCV]],
+      doc: { f: "04", s: "セッション鍵派生: EMV Book 2 Annex A1.3 (Common Session Key)" },
+      desc: "ARQC と ARPC の計算に使う。カードは自分の ATC で、イシュアは承認要求で受け取った ATC で、同じ SK を作る。",
+      extra: ["1 対多: 1 本の MK から ATC ごとに最大 65536 本の SK が派生する。"] }),
+    data("iad", "AIP / IAD", { sub: "82 / 9F10(CVN 18 を含む)", c: 2, r: 4, where: "カード内", origin: ext("カードのデータ"), value: "3800 / 06011203A0B800",
+      doc: { f: "04", s: "CVN (Cryptogram Version Number)" },
+      desc: "IAD(Issuer Application Data)の 3 バイト目 0x12 = 18 が CVN 18 を表す。イシュアはこれを見て検証方式を決める。" }),
+    data("termData", "端末が渡すデータ(CDOL1)", { sub: "金額、国、通貨、日付、UN など", c: 2, r: 5, where: "端末", origin: ext("端末が生成"), value: "9F02 9F03 9F1A 95 5F2A 9A 9C 9F37",
+      doc: { f: "04", s: "ARQC (Authorisation Request Cryptogram)" },
+      desc: "カードが CDOL1 で要求する「最小推奨データ」。端末は値だけをこの順に連結して GENERATE AC コマンドでカードに渡す。" }),
+    data("tx", "取引データ(値の連結)", { sub: "CDOL1 の値 + AIP + ATC + IAD", c: 3, r: 3, where: "カード(GENERATE AC で受領して連結)", origin: CALC, value: E.tx,
+      steps: E.txParts.map((p) => [p[0] + " " + p[1], p[2]]),
+      doc: { f: "04", s: "ARQC (Authorisation Request Cryptogram)" },
+      desc: "MAC をかける対象。タグと長さは含まず、値だけを 11 項目この順に連結した 40 バイト。" }),
+    op("opMac", "Retail MAC", { c: 5, r: 2, where: "カード(イシュアも同じ計算で再現)",
+      formula: ["ARQC = RetailMAC_SK( 取引データ )", "ISO/IEC 9797-1 MAC Algorithm 3、パディング方式 2(80 00…)", "全ブロックを左鍵で単一 DES CBC → 最後だけ右鍵で復号 → 左鍵で暗号化"],
+      steps: [["パディング後(6 ブロック)", E.msg]].concat(E.chain.map((h, i) => ["ブロック " + (i + 1) + " まで CBC(左鍵)", h])).concat([["右鍵で復号", E.macDec], ["左鍵で暗号化 = ARQC", E.ARQC]]),
+      doc: { f: "01", s: "Retail MAC" },
+      desc: "05 の CVV と同じ MAC アルゴリズム。左鍵 = SK の左 8 バイト、右鍵 = 右 8 バイト。" }),
+    data("arqc", "ARQC", { sub: "承認要求クリプトグラム(9F26)", c: 6, r: 2, where: "カード → 承認要求に載せて送信", origin: CALC, value: E.ARQC,
+      doc: { f: "04", s: "ARQC (Authorisation Request Cryptogram)" },
+      desc: "カードがオンライン承認を要求するときに生成する MAC。イシュアは同じ鍵と同じデータで再計算し、一致すればカードが本物で取引データが改ざんされていないと判断する。",
+      extra: ["順序 1: カードが 1 回目の GENERATE AC で生成し、端末が承認要求(ISO 8583 フィールド 55)に載せてイシュアへ送る。"] }),
+    data("arqcRecv", "ARQC(承認要求から)", { sub: "9F26 として届いた値", c: 6, r: 3, where: "イシュア", origin: ext("承認要求で受信"), value: E.ARQC,
+      doc: { f: "04", s: "ARQC (Authorisation Request Cryptogram)" }, desc: "カードが計算して送ってきた ARQC。" }),
+    cmp("cmpArqc", "ARQC 照合(イシュア)", { c: 7, r: 2, where: "イシュア HSM", result: "一致",
+      steps: [["承認要求で受け取った ARQC", E.ARQC], ["イシュアが再計算した ARQC", E.ARQC]],
+      doc: { f: "04", s: "ARQC (Authorisation Request Cryptogram)" },
+      desc: "イシュアは受け取った PAN / PSN / ATC から MK と SK を再計算し、同じ取引データに同じ Retail MAC をかけて比較する。一致すればカードは本物。" }),
+    data("arc", "ARC", { sub: "承認応答コード(2 バイト ASCII)", c: 6, r: 6, where: "イシュア", origin: ext("イシュアが承認 / 否認を決定"), value: E.ARC + ' = "00"(承認)',
+      doc: { f: "04", s: "方式 1" }, desc: "イシュアの判断結果。30 30 = \"00\" が承認。" }),
+    op("opArpc", "ARPC 方式 1", { c: 7, r: 5, where: "イシュア HSM", formula: ["ARPC = 3DES_SK( ARQC ⊕ ( ARC ‖ 00 00 00 00 00 00 ) )"],
+      steps: [["ARQC", E.ARQC], ["ARC ‖ 00…00", E.arcPad], ["ARQC ⊕ (ARC ‖ 00…00)", E.arqcXor], ["3DES_SK(…) = ARPC", E.ARPC]],
+      doc: { f: "04", s: "方式 1" },
+      desc: "イシュアが「この ARQC を確認したうえで承認 / 否認した」ことをカードに証明する値。ARQC が入力に入るので今回の取引にしか通用せず、ARC も入るので承認 / 否認を書き換えると合わなくなる。",
+      extra: ["方式 2 は RetailMAC_SK(ARQC ‖ CSU ‖ …) の先頭 4 バイト(未実装)。"] }),
+    data("arpc", "ARPC", { sub: "Authorisation Response Cryptogram", c: 8, r: 5, where: "イシュア → 承認応答(tag 91)に載せて送信", origin: CALC, value: E.ARPC,
+      doc: { f: "04", s: "ARPC (Authorisation Response Cryptogram)" },
+      desc: "承認応答のタグ 91(Issuer Authentication Data)に ARC と並べて入れる。" }),
+    data("arpcRecv", "ARPC(承認応答から)", { sub: "tag 91 として届いた値", c: 8, r: 6, where: "カード", origin: ext("EXTERNAL AUTHENTICATE で受領"), value: E.ARPC,
+      doc: { f: "04", s: "ARPC (Authorisation Response Cryptogram)" }, desc: "端末が応答から取り出してカードに渡す。" }),
+    cmp("cmpArpc", "ARPC 照合(カード)", { c: 9, r: 5, where: "カード内", result: "一致",
+      steps: [["応答で受け取った ARPC", E.ARPC], ["カードが再計算した ARPC", E.ARPC]],
+      doc: { f: "04", s: "ARPC (Authorisation Response Cryptogram)" },
+      desc: "カードは覚えておいた ARQC、受け取った ARC、自分の SK で ARPC を再計算して比較する。一致すれば「イシュア認証成功」。",
+      extra: ["順序 2: 成功すると Last Online ATC Register(9F13)を現在の ATC に更新してオフラインカウンタをリセットし(副作用)、2 回目の GENERATE AC で TC / AAC を返して取引を確定する。", "失敗すると CVR に失敗ビットを立て、設定次第で AAC を返して拒否する。"] }),
+    note("nImk", 0, 1, "IMK は AC / SMI / SMC の 3 本あり、\n同じ木が 3 系統ある(デモは AC のみ)。\nイシュアの HSM だけが持つ。", "imk"),
+    note("nMk", 1, 1, "重ねたノード = 1 対多。IMK 1 本から\nPAN + PSN ごとに MK が、MK 1 本から\nATC ごとに SK が無数に派生する。", "mk"),
+    note("nAtc", 1, 4, "状態: カードが取引ごとに 1 増やす\nカウンタ。外から与える引数ではなく、\nカード自身が保持し更新する。", "atc"),
+    note("nOrder1", 5, 1, "順序 1: カードが 1 回目の GENERATE AC\nで ARQC を作り、端末が承認要求に\n載せてイシュアへ送る。", "opMac"),
+    note("nVerify", 7, 3, "イシュアは受け取った PAN / PSN / ATC から\nMK と SK を再計算し、同じ Retail MAC で\nARQC を再計算して比較する。", "cmpArqc"),
+    note("nOrder2", 9, 6, "順序 2: 応答の ARPC を端末が EXTERNAL\nAUTHENTICATE でカードに渡す。一致で\n9F13 を ATC に更新(副作用)、2 回目の\nGENERATE AC で TC / AAC を返す。", "cmpArpc"),
+  ],
+  edges: [
+    e("imk", "opMk"), e("pan4", "opMk"), e("psn", "opMk"), e("opMk", "mk"),
+    e("mk", "opSk"), e("atc", "opSk"), e("opSk", "sk"),
+    e("atc", "tx"), e("iad", "tx"), e("termData", "tx"),
+    e("sk", "opMac"), e("tx", "opMac"), e("opMac", "arqc"),
+    e("arqc", "cmpArqc"), e("arqcRecv", "cmpArqc"),
+    e("sk", "opArpc", { route: "v" }), e("arqc", "opArpc"), e("arc", "opArpc"), e("opArpc", "arpc"),
+    e("arpc", "cmpArpc"), e("arpcRecv", "cmpArpc"),
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// 05 CVV
+// ---------------------------------------------------------------------------
+const C = V.k05;
+const cvvSteps = (s) => [["入力(32 桁に 0 詰め)", s.data], ["B1(先頭 8 バイト)", s.B1], ["B2(後ろ 8 バイト)", s.B2], ["T = DES_CVKA(B1)", s.T1], ["T ⊕ B2", s.T1xB2], ["T = DES_CVKA(T ⊕ B2)", s.T2], ["T = DES_CVKB⁻¹(T)", s.T3], ["T = DES_CVKA(T)", s.T4], ["decimalize(T)", s.dec], ["先頭 3 桁", s.CVV]];
+const TAB05 = {
+  id: "05", title: "05 CVV", doc: "05",
+  intro: "CVV は PAN、有効期限、サービスコードにイシュアの秘密鍵(CVK A / B)で付けた 3 桁の MAC。アルゴリズムは 04 の ARQC と同じ Retail MAC で、左鍵が CVK A、右鍵が CVK B。サービスコードを 999 に替えると iCVV になり、チップのデータでストライプを偽造できなくなる。",
+  frames: [
+    { label: "イシュアの鍵", c0: 0, c1: 0, r0: 0, r1: 1 },
+    { label: "カードのデータ", c0: 0, c1: 0, r0: 2, r1: 4 },
+    { label: "固定値", c0: 0, c1: 0, r0: 5, r1: 5 },
+    { label: "イシュアの HSM(発行時 / 承認時に計算)", c0: 1, c1: 2, r0: 0, r1: 5 },
+    { label: "検証(承認時)", c0: 3, c1: 3, r0: 0, r1: 2 },
+  ],
+  nodes: [
+    key("cvkA", "CVK A", { sub: "Card Verification Key A(単一 DES 鍵)", c: 0, r: 0, where: "イシュア HSM", origin: RANDOM, value: C.CVK_A,
+      doc: { f: "05", s: "登場する鍵" }, desc: "Retail MAC の左鍵。全ブロックの CBC と最後の暗号化に使う。", protect: ["LMK で暗号化して保管"],
+      extra: ["CVK A と CVK B は別々の乱数。同じ値だと最後の 3DES が単一 DES に退化する。実務では 16 バイト 1 本の鍵として扱う。"] }),
+    key("cvkB", "CVK B", { sub: "Card Verification Key B(単一 DES 鍵)", c: 0, r: 1, where: "イシュア HSM", origin: RANDOM, value: C.CVK_B,
+      doc: { f: "05", s: "登場する鍵" }, desc: "Retail MAC の右鍵。最後のブロックの復号にだけ使う。", protect: ["LMK で暗号化して保管"] }),
+    data("pan5", "PAN", { sub: "カード番号(16 桁)", c: 0, r: 2, where: "カード", origin: ext("カードのデータ"), value: C.PAN,
+      doc: { f: "05", s: "CVV の計算" }, desc: "チェックデジットを含めてそのまま使う。", extra: ["他章でも使う: 03(PIN ブロック、PVV)、04(MK 派生)。"] }),
+    data("exp", "有効期限", { sub: "YYMM", c: 0, r: 3, where: "カード", origin: ext("カードのデータ"), value: C.EXPIRY,
+      doc: { f: "05", s: "CVV の計算" }, desc: "有効期限も MAC の入力に入るので、書き換えると CVV が合わなくなる。" }),
+    data("sc", "サービスコード", { sub: "3 桁(201 = IC 優先)", c: 0, r: 4, where: "カード", origin: ext("カードのデータ"), value: C.cvv.serviceCode,
+      doc: { f: "05", s: "CVV の種類" }, desc: "入力に含まれるので、「IC 優先」を「磁気のみ」に書き換えて IC を回避しようとすると CVV が合わなくなる。" }),
+    data("sc999", "サービスコード 999", { sub: "iCVV 用の固定値", c: 0, r: 5, where: "固定値", origin: ext("規格で固定"), value: C.icvv.serviceCode,
+      doc: { f: "05", s: "CVV の種類" }, desc: "iCVV では実際のサービスコードの代わりに 999 を入れる。" }),
+    op("opCvv", "CVV 計算", { sub: "Retail MAC + 10 進化", c: 1, r: 1, where: "イシュア HSM",
+      formula: ["入力 = PAN ‖ 有効期限 ‖ サービスコード を右に 0 詰めして 32 桁", "B1, B2 = 先頭 8 バイト, 後ろ 8 バイト", "T = DES_CVKA( B1 )", "T = DES_CVKA( T ⊕ B2 )", "T = DES_CVKB⁻¹( T )", "T = DES_CVKA( T )", "CVV = decimalize( T ) の先頭 3 桁"],
+      steps: cvvSteps(C.cvv), doc: { f: "05", s: "CVV の計算" },
+      desc: "1〜2 行目は単一 DES の CBC-MAC、3〜4 行目は直前と合わせて EDE(3DES)。最初のブロックだけ単一 DES、最後を 2-key 3DES で仕上げる Retail MAC そのもの。",
+      extra: ["最後だけ 3DES にするのは、処理量を単一 DES 並みに抑えつつ、鍵の総当たり耐性を 3DES 相当に上げるため。", "64 ビットの MAC を 3 桁に切り詰めるので 1000 分の 1 で偶然一致するが、オンライン承認で試行回数を制限できる。"] }),
+    data("cvvCalc", "CVV(計算値)", { c: 2, r: 1, where: "イシュア HSM", origin: CALC, value: C.cvv.CVV,
+      doc: { f: "05", s: "CVV の計算" }, desc: "発行時にストライプへ書き込む値であり、承認時に再計算する値でもある。" }),
+    data("cvvRead", "CVV(ストライプから)", { sub: "トラック 1 / 2 に記録された値", c: 3, r: 2, where: "承認要求", origin: ext("端末がストライプを読取"), value: C.cvv.CVV,
+      doc: { f: "05", s: "CVV の種類" }, desc: "磁気ストライプのトラック 1 / 2 に入っている CVV(CVV1)。" }),
+    cmp("cmpCvv", "CVV 照合", { c: 3, r: 1, where: "イシュア", result: "一致", steps: [["ストライプから読んだ CVV", C.cvv.CVV], ["再計算した CVV", C.cvv.CVV]],
+      doc: { f: "05", s: "CVV の計算" },
+      desc: "承認要求の PAN / 有効期限 / サービスコードから再計算し、ストライプの値と比べる。CVK を持たない攻撃者は PAN と有効期限を知っていてもストライプを偽造できない。" }),
+    op("opIcvv", "iCVV 計算(同じ手順)", { c: 1, r: 4, where: "イシュア HSM(発行時)", formula: ["サービスコードを 999 に置き換えて CVV と同じ計算"],
+      steps: cvvSteps(C.icvv), doc: { f: "05", s: "CVV の種類" },
+      desc: "計算方法は CVV と同じで、入力のサービスコードだけが違う。" }),
+    data("icvv", "iCVV", { sub: "チップ内のトラック 2 相当データ", c: 2, r: 4, where: "カード(チップ内)", origin: CALC, value: C.icvv.CVV,
+      doc: { f: "05", s: "CVV の種類" },
+      desc: "磁気ストライプとチップで値が異なるため、チップから読んだデータで磁気ストライプを偽造できない。",
+      extra: ["CVV2(裏面印字)はサービスコードを 000 にするなど入力構成が違い、ストライプにもチップにも入っていない。", "dCVV は ATC を入力に含め、非接触取引ごとに値が変わる。"] }),
+    note("nCvk", 2, 0, "CVK A / B は別々の乱数。同じ値だと\n最後の 3DES が単一 DES に退化する。\n実務では 16 バイト 1 本の鍵として扱う。", "cvkA"),
+    note("nMac", 1, 2, "04 の ARQC と同じ Retail MAC\n(ISO/IEC 9797-1 Alg.3)。左鍵 = CVK A、\n右鍵 = CVK B。最後に 10 進化して 3 桁。", "opCvv"),
+    note("nCmp", 3, 0, "イシュアは承認要求の PAN / 有効期限 /\nサービスコードから再計算し、ストライプ\nの CVV と比較する。", "cmpCvv"),
+    note("nIcvv", 3, 4, "iCVV はチップ内のトラック 2 相当データに\n入る。ストライプの CVV と値が違うので、\nチップから読んだデータでストライプを\n偽造できない。", "icvv"),
+  ],
+  edges: [
+    e("cvkA", "opCvv"), e("cvkB", "opCvv"), e("pan5", "opCvv"), e("exp", "opCvv"), e("sc", "opCvv"), e("opCvv", "cvvCalc"),
+    e("cvvCalc", "cmpCvv"), e("cvvRead", "cmpCvv"),
+    e("cvkA", "opIcvv"), e("cvkB", "opIcvv"), e("pan5", "opIcvv"), e("exp", "opIcvv"), e("sc999", "opIcvv"), e("opIcvv", "icvv"),
+  ],
+};
+
+const TABS = [TAB02, TAB03, TAB04, TAB05];
+
+// ---------------------------------------------------------------------------
+// 描画
+// ---------------------------------------------------------------------------
+const COLW = 272, ROWH = 104, NW = 224, NH = 74, NOTE_W = 240, M = 40, GAP = COLW - NW;
+const NS = "http://www.w3.org/2000/svg";
+const svg = document.getElementById("canvas");
+const panel = document.getElementById("panel");
+let cur = 0, selected = null;
+const opt = { notes: true, frames: true, protect: true };
+let vb = { x: 0, y: 0, w: 1000, h: 600 };
+
+function el(tag, attrs, text) {
+  const n = document.createElementNS(NS, tag);
+  for (const k in attrs || {}) n.setAttribute(k, attrs[k]);
+  if (text != null) n.textContent = text;
+  return n;
+}
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const tw = (s) => [...String(s)].reduce((w, ch) => w + (ch.charCodeAt(0) > 255 ? 9 : 5.4), 0);
+
+function box(n) {
+  if (n.kind === "note") {
+    const lines = n.text.split("\n").length;
+    return { x: M + n.c * COLW, y: M + n.r * ROWH, w: NOTE_W, h: 12 + lines * 15 };
+  }
+  return { x: M + n.c * COLW, y: M + n.r * ROWH, w: NW, h: NH };
+}
+const cy = (b) => b.y + b.h / 2;
+
+function edgePath(a, b, o) {
+  o = o || {};
+  if (o.route === "v") {
+    // 出発ノードの下から真下に降り、目的ノードの行で右へ曲がる
+    const sx = a.x + a.w / 2, sy = a.y + a.h, tx = b.x, ty = cy(b);
+    return `M${sx},${sy} L${sx},${ty - 22} Q${sx},${ty} ${sx + 22},${ty} L${tx},${ty}`;
+  }
+  if (b.x >= a.x + a.w) {
+    // 前方: 出発行(または指定レーン)に沿って進み、最後の列間で曲がる
+    const sx = a.x + a.w, sy = cy(a), tx = b.x, ty = cy(b);
+    const yl = o.lane != null ? M + o.lane * ROWH + NH / 2 : sy;
+    const x1 = sx + GAP, x2 = tx - GAP;
+    if (x2 <= x1 + 4) return `M${sx},${sy} C${(sx + tx) / 2},${sy} ${(sx + tx) / 2},${ty} ${tx},${ty}`;
+    return `M${sx},${sy} C${sx + GAP / 2},${sy} ${sx + GAP / 2},${yl} ${x1},${yl} L${x2},${yl} C${tx - GAP / 2},${yl} ${tx - GAP / 2},${ty} ${tx},${ty}`;
+  }
+  if (b.x + b.w <= a.x) {
+    const sx = a.x, sy = cy(a), tx = b.x + b.w, ty = cy(b), d = Math.max(50, (sx - tx) / 2);
+    return `M${sx},${sy} C${sx - d},${sy} ${tx + d},${ty} ${tx},${ty}`;
+  }
+  // 同じ列: 上下につなぐ
+  if (b.y > a.y) {
+    const sx = a.x + a.w / 2, sy = a.y + a.h, tx = b.x + b.w / 2, ty = b.y, d = (ty - sy) / 2;
+    return `M${sx},${sy} C${sx},${sy + d} ${tx},${ty - d} ${tx},${ty}`;
+  }
+  const sx = a.x + a.w / 2, sy = a.y, tx = b.x + b.w / 2, ty = b.y + b.h, d = (sy - ty) / 2;
+  return `M${sx},${sy} C${sx},${sy - d} ${tx},${ty + d} ${tx},${ty}`;
+}
+
+function whereClass(w) {
+  if (!w) return "";
+  if (/HSM|イシュア/.test(w) && !/カード/.test(w)) return "hsm";
+  if (/カード|チップ/.test(w)) return "card";
+  if (/端末/.test(w)) return "term";
+  return "";
+}
+
+function badge(g, x, y, text, cls) {
+  const w = tw(text) + 10;
+  const b = el("g", { class: "bdg " + (cls || ""), transform: `translate(${x},${y})` });
+  b.append(el("rect", { x: 0, y: 0, width: w, height: 14 }));
+  b.append(el("text", { x: 5, y: 10 }, text));
+  g.append(b);
+  return w;
+}
+
+function drawNode(n, b, nb) {
+  const cls = ["node", n.kind, selected === n.id ? "sel" : "", nb.has(n.id) ? "nb" : "", selected && selected !== n.id && !nb.has(n.id) ? "dim" : ""].join(" ");
+  const g = el("g", { class: cls, "data-id": n.id, transform: `translate(${b.x},${b.y})` });
+  if (n.kind === "note") {
+    g.append(el("rect", { class: "body", x: 0, y: 0, width: b.w, height: b.h, rx: 5 }));
+    const t = el("text", { class: "ntext", x: 8, y: 16 });
+    n.text.split("\n").forEach((line, i) => t.append(el("tspan", { x: 8, dy: i ? 15 : 0 }, line)));
+    g.append(t);
+    return g;
+  }
+  if (n.many) {
+    g.append(el("rect", { class: "stack", x: 10, y: 10, width: b.w, height: b.h, rx: 8 }));
+    g.append(el("rect", { class: "stack", x: 5, y: 5, width: b.w, height: b.h, rx: 8 }));
+  }
+  g.append(el("rect", { class: "body", x: 0, y: 0, width: b.w, height: b.h, rx: 8 }));
+  const prefix = n.kind === "op" ? "ƒ " : n.kind === "cmp" ? "≟ " : "";
+  g.append(el("text", { class: "label", x: 9, y: 17 }, prefix + n.label));
+  if (n.sub) g.append(el("text", { class: "subt", x: 9, y: 30 }, n.sub));
+  let v;
+  if (n.kind === "cmp") v = "→ " + (n.result || "");
+  else if (n.kind === "op") v = n.formula ? n.formula[0] : "";
+  else v = n.value == null ? "(値なし)" : n.value;
+  const vt = el("text", { class: "val" + (n.secret ? " secret" : ""), x: 9, y: 45 }, v.length > 36 ? v.slice(0, 34) + "…" : v);
+  g.append(vt);
+  let x = 8;
+  if (n.where) x += badge(g, x, b.h - 19, n.where.length > 18 ? n.where.slice(0, 17) + "…" : n.where, whereClass(n.where)) + 4;
+  if (n.origin && n.origin.k !== "derived" && n.kind !== "op") x += badge(g, x, b.h - 19, n.origin.t.length > 12 ? n.origin.t.slice(0, 11) + "…" : n.origin.t, n.origin.k) + 4;
+  if (n.secret) x += badge(g, x, b.h - 19, "平文", "secret") + 4;
+  return g;
+}
+
+function render() {
+  const tab = TABS[cur];
+  svg.innerHTML = "";
+  const defs = el("defs");
+  for (const [id, color] of [["arrow", "#6b7380"], ["arrowhl", "#0969da"], ["arrowp", "#c99a2e"]]) {
+    const m = el("marker", { id, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" });
+    m.append(el("path", { d: "M0,0 L10,5 L0,10 z", fill: color }));
+    defs.append(m);
+  }
+  svg.append(defs);
+  const byId = {}, pos = {};
+  for (const n of tab.nodes) { byId[n.id] = n; pos[n.id] = box(n); }
+  const visible = (n) => n.kind !== "note" || opt.notes;
+
+  const gFrames = el("g"), gEdges = el("g"), gNodes = el("g");
+  if (opt.frames) for (const f of tab.frames) {
+    const x = M + f.c0 * COLW - 12, y = M + f.r0 * ROWH - 20, w = (f.c1 - f.c0) * COLW + NW + 24, h = (f.r1 - f.r0) * ROWH + NH + 26;
+    const g = el("g", { class: "frame" });
+    g.append(el("rect", { x, y, width: w, height: h, rx: 10 }));
+    g.append(el("text", { x: x + 10, y: y + 13 }, f.label));
+    gFrames.append(g);
+  }
+  const nb = new Set();
+  if (selected) for (const ed of tab.edges) { if (ed.from === selected) nb.add(ed.to); if (ed.to === selected) nb.add(ed.from); }
+  for (const ed of tab.edges) {
+    if (ed.kind === "protect" && !opt.protect) continue;
+    const hl = selected && (ed.from === selected || ed.to === selected);
+    const dim = selected && !hl;
+    const p = el("path", { class: ["edge", ed.kind === "protect" ? "protect" : "", hl ? "hl" : "", dim ? "dim" : ""].join(" "), d: edgePath(pos[ed.from], pos[ed.to], ed),
+      "marker-end": `url(#${hl ? "arrowhl" : ed.kind === "protect" ? "arrowp" : "arrow"})` });
+    gEdges.append(p);
+  }
+  if (opt.notes) for (const n of tab.nodes) if (n.kind === "note" && n.target && pos[n.target]) {
+    const a = pos[n.id], b = pos[n.target];
+    gEdges.append(el("path", { class: "edge noteline", d: `M${a.x + a.w / 2},${a.y + a.h / 2} L${b.x + b.w / 2},${b.y + b.h / 2}` }));
+  }
+  for (const n of tab.nodes) if (visible(n)) {
+    if (n.kind !== "note") continue; gNodes.append(drawNode(n, pos[n.id], nb));
+  }
+  for (const n of tab.nodes) if (n.kind !== "note") gNodes.append(drawNode(n, pos[n.id], nb));
+  svg.append(gFrames, gEdges, gNodes);
+  svg.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+}
+
+function contentBox() {
+  const tab = TABS[cur];
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const add = (x, y, w, h) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x + w); y1 = Math.max(y1, y + h); };
+  for (const n of tab.nodes) { if (n.kind === "note" && !opt.notes) continue; const b = box(n); add(b.x, b.y, b.w + (n.many ? 10 : 0), b.h + (n.many ? 10 : 0)); }
+  if (opt.frames) for (const f of tab.frames) add(M + f.c0 * COLW - 12, M + f.r0 * ROWH - 20, (f.c1 - f.c0) * COLW + NW + 24, (f.r1 - f.r0) * ROWH + NH + 26);
+  return { x: x0 - 24, y: y0 - 24, w: x1 - x0 + 48, h: y1 - y0 + 48 };
+}
+
+function fit() {
+  const c = contentBox();
+  const W = svg.clientWidth || 1000, H = svg.clientHeight || 600;
+  const s = Math.max(c.w / W, c.h / H);
+  vb = { x: c.x - (W * s - c.w) / 2, y: c.y - (H * s - c.h) / 2, w: W * s, h: H * s };
+  svg.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+}
+function zoomAt(factor, px, py) {
+  const r = svg.getBoundingClientRect();
+  const mx = vb.x + ((px - r.left) / r.width) * vb.w, my = vb.y + ((py - r.top) / r.height) * vb.h;
+  vb = { x: mx - (mx - vb.x) * factor, y: my - (my - vb.y) * factor, w: vb.w * factor, h: vb.h * factor };
+  svg.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+}
+
+// ---------------------------------------------------------------------------
+// 右パネル
+// ---------------------------------------------------------------------------
+const KIND_JA = { key: "鍵(値)", data: "データ(値)", op: "操作(計算)", cmp: "操作(比較)", note: "注釈" };
+function legendHtml() {
+  const sw = (fill, stroke, dash) => `<svg viewBox="0 0 44 22"><rect x="2" y="3" width="40" height="16" rx="5" fill="${fill}" stroke="${stroke}" ${dash ? 'stroke-dasharray="3 3"' : ""}/></svg>`;
+  const ln = (stroke, dash) => `<svg viewBox="0 0 44 22"><path d="M2,11 L42,11" stroke="${stroke}" stroke-width="2" fill="none" ${dash ? `stroke-dasharray="${dash}"` : ""}/></svg>`;
+  return `<div class="legend">
+    ${sw("#fff4d6", "#c99a2e")}<span>鍵(値)。乱数生成か、計算で派生</span>
+    ${sw("#e8f1fb", "#4a79b8")}<span>データ(値)。入力、途中結果、受け取った値</span>
+    ${sw("#eaf6e8", "#4e8f4a")}<span>ƒ 操作(計算)。クリックで式と途中値</span>
+    ${sw("#f9e9f1", "#a33c73")}<span>≟ 操作(比較)。2 つの値を突き合わせて一致 / 不一致</span>
+    ${sw("#fffbe6", "#d9c36a", true)}<span>注釈。状態・順序、1 対多、往復などの補足</span>
+    ${ln("#6b7380")}<span>計算の流れ(入力 → 操作 → 出力)</span>
+    ${ln("#c99a2e", "7 5")}<span>保護関係(上の鍵で暗号化して保管・運搬)</span>
+    ${ln("#c4b56a", "2 4")}<span>注釈の対象</span>
+    <span class="badge random">乱数生成</span><span>何からも計算されない根</span>
+    <span class="badge external">受信 / 読取</span><span>外部から来た値(比較の相手など)</span>
+    <span class="badge state">状態</span><span>カードが保持し更新する値(ATC)</span>
+    <span class="badge secret">平文</span><span>PIN パッドや HSM の外に出ない値</span>
+  </div>`;
+}
+function defaultPanel() {
+  const tab = TABS[cur];
+  panel.innerHTML = `<h2>${esc(tab.title)}</h2><div class="sub">${esc(DOCS[tab.doc])}</div><p>${esc(tab.intro)}</p>
+    <h3>読み方</h3><p>左から右へ計算が進む。ノードをクリックすると、その値、式、途中の値、文書の該当節をここに表示する。選んだノードにつながる辺は青く強調される。</p>
+    <h3>凡例</h3>${legendHtml()}`;
+}
+function showNode(n) {
+  const tab = TABS[cur];
+  let h = `<h2>${esc(n.label)}</h2>`;
+  if (n.sub) h += `<div class="sub">${esc(n.sub)}</div>`;
+  h += `<div class="badges"><span class="badge ${n.kind}">${KIND_JA[n.kind]}</span>`;
+  if (n.where) h += `<span class="badge">${esc(n.where)}</span>`;
+  if (n.origin) h += `<span class="badge ${n.origin.k}">${esc(n.origin.t)}</span>`;
+  if (n.secret) h += `<span class="badge secret">平文。外に出ない</span>`;
+  if (n.many) h += `<span class="badge">1 対多</span>`;
+  h += `</div>`;
+  if (n.kind === "note") { h += `<p>${esc(n.text).replace(/\n/g, " ")}</p>`; panel.innerHTML = h; return; }
+  if (n.desc) h += `<p>${esc(n.desc)}</p>`;
+  if (n.kind === "key" || n.kind === "data") {
+    h += `<h3>値</h3>`;
+    h += n.value == null ? `<p>${esc(n.vnote || "値なし")}</p>` : `<pre>${esc(n.value)}</pre>`;
+  }
+  if (n.kind === "cmp") h += `<h3>結果</h3><p><b>${esc(n.result)}</b></p>`;
+  if (n.formula) h += `<h3>式</h3><pre>${esc(n.formula.join("\n"))}</pre>`;
+  if (n.steps && n.steps.length) {
+    h += `<h3>${n.kind === "cmp" ? "比較した値" : n.kind === "op" ? "途中の値" : "関連する値"}</h3><table>`;
+    for (const [k, v] of n.steps) h += `<tr><td>${esc(k)}</td><td><code>${esc(v)}</code></td></tr>`;
+    h += `</table>`;
+  }
+  const ins = tab.edges.filter((d) => d.kind === "flow" && d.to === n.id).map((d) => d.from);
+  const outs = tab.edges.filter((d) => d.kind === "flow" && d.from === n.id).map((d) => d.to);
+  const name = (id) => { const m = tab.nodes.find((x) => x.id === id); return m ? esc(m.label) : id; };
+  if (ins.length || outs.length) {
+    h += `<h3>つながり</h3><ul>`;
+    if (ins.length) h += `<li>入力: ${ins.map(name).join("、")}</li>`;
+    if (outs.length) h += `<li>出力先: ${outs.map(name).join("、")}</li>`;
+    h += `</ul>`;
+  }
+  if (n.protect && n.protect.length) h += `<h3>保護関係</h3><ul>${n.protect.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>`;
+  if (n.extra && n.extra.length) h += `<h3>補足</h3><ul>${n.extra.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>`;
+  if (n.doc) h += `<div class="doc">参照: <a href="../${DOCS[n.doc.f]}" target="_blank">${esc(DOCS[n.doc.f])}</a> › ${esc(n.doc.s)}</div>`;
+  panel.innerHTML = h;
+}
+function select(id) {
+  selected = id;
+  render();
+  const n = TABS[cur].nodes.find((x) => x.id === id);
+  if (n) showNode(n); else defaultPanel();
+}
+
+// ---------------------------------------------------------------------------
+// 操作
+// ---------------------------------------------------------------------------
+const tabsEl = document.getElementById("tabs");
+TABS.forEach((t, i) => {
+  const b = document.createElement("button");
+  b.textContent = t.title;
+  b.onclick = () => switchTab(i);
+  tabsEl.append(b);
+});
+function switchTab(i) {
+  cur = i; selected = null;
+  [...tabsEl.children].forEach((b, j) => b.classList.toggle("on", j === i));
+  render(); fit(); defaultPanel();
+  history.replaceState(null, "", "#" + TABS[i].id);
+}
+document.getElementById("tNotes").onchange = (ev) => { opt.notes = ev.target.checked; render(); };
+document.getElementById("tFrames").onchange = (ev) => { opt.frames = ev.target.checked; render(); };
+document.getElementById("tProtect").onchange = (ev) => { opt.protect = ev.target.checked; render(); };
+document.getElementById("fit").onclick = fit;
+document.getElementById("zoomIn").onclick = () => { const r = svg.getBoundingClientRect(); zoomAt(0.8, r.left + r.width / 2, r.top + r.height / 2); };
+document.getElementById("zoomOut").onclick = () => { const r = svg.getBoundingClientRect(); zoomAt(1.25, r.left + r.width / 2, r.top + r.height / 2); };
+
+let drag = null;
+svg.addEventListener("mousedown", (ev) => { drag = { x: ev.clientX, y: ev.clientY, vx: vb.x, vy: vb.y, moved: false }; });
+window.addEventListener("mousemove", (ev) => {
+  if (!drag) return;
+  const r = svg.getBoundingClientRect(), s = vb.w / r.width;
+  const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+  if (Math.abs(dx) + Math.abs(dy) > 3) { drag.moved = true; svg.classList.add("drag"); }
+  vb.x = drag.vx - dx * s; vb.y = drag.vy - dy * s;
+  svg.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+});
+window.addEventListener("mouseup", (ev) => {
+  if (!drag) return;
+  const moved = drag.moved; drag = null; svg.classList.remove("drag");
+  if (moved) return;
+  const g = ev.target.closest && ev.target.closest(".node");
+  select(g ? g.getAttribute("data-id") : null);
+});
+svg.addEventListener("wheel", (ev) => { ev.preventDefault(); zoomAt(Math.exp(ev.deltaY * 0.0015), ev.clientX, ev.clientY); }, { passive: false });
+window.addEventListener("resize", fit);
+
+const initial = Math.max(0, TABS.findIndex((t) => "#" + t.id === location.hash));
+switchTab(initial);
+</script>
+</body>
+</html>
